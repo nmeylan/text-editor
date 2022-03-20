@@ -1,0 +1,18 @@
+[package]
+name = "text-editor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { git = "https://github.com/emilk/egui", rev = "c69f39e8697c56d50b1f53199abea9122573353b" }
+egui_glow = { git = "https://github.com/emilk/egui", rev = "c69f39e8697c56d50b1f53199abea9122573353b" }
+glutin = "0.28.0"
+glow_glyph = "0.5.0"
+bytecount = "0.6.2"
+elapsed-time = "0.1"
+
+
+[patch.crates-io]
+ab_glyph = { git = "https://github.com/nmeylan/ab-glyph"}
+glyph_brush_layout = { path = "/home/nmeylan/dev/perso/glyph-brush/layout" }
+glow_glyph = { git = "https://github.com/nmeylan/glow_glyph.git" }
