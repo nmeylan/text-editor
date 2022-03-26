@@ -22,31 +22,31 @@ use eframe::{egui, epi, epaint, emath};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
 
 pub struct TextEditor {
-    split: Vec<String>,
-    glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
-    glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
-    scroll_offset: Pos<f32>,
-    lines_count: usize,
-    char_width: f32,
-    line_height: f32,
-    scale: f32,
-    gutter_width: f32,
-    has_pressed_arrow_key: bool,
-    text_editor_viewport: Rect,
+    pub(crate)split: Vec<String>,
+    pub(crate)glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
+    pub(crate)glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
+    pub(crate)scroll_offset: Pos<f32>,
+    pub(crate)lines_count: usize,
+    pub(crate)char_width: f32,
+    pub(crate)line_height: f32,
+    pub(crate)scale: f32,
+    pub(crate)gutter_width: f32,
+    pub(crate)has_pressed_arrow_key: bool,
+    pub(crate)text_editor_viewport: Rect,
     // Position
-    cursor_index: Pos<usize>,
-    cursor_pos: Pos<f32>,
-    start_dragged_index: Pos<usize>,
-    stop_dragged_index: Pos<usize>,
-    selection_start_index: Pos<usize>,
-    selection_end_index: Pos<usize>,
+    pub(crate)cursor_index: Pos<usize>,
+    pub(crate)cursor_pos: Pos<f32>,
+    pub(crate)start_dragged_index: Pos<usize>,
+    pub(crate)stop_dragged_index: Pos<usize>,
+    pub(crate)selection_start_index: Pos<usize>,
+    pub(crate)selection_end_index: Pos<usize>,
 
 }
 
 #[derive(Default, Debug, Clone)]
-struct Pos<T> {
-    x: T,
-    y: T,
+pub struct Pos<T> {
+    pub x: T,
+    pub y: T,
 }
 
 impl TextEditor {
@@ -320,7 +320,7 @@ impl TextEditor {
     }
 
     #[inline]
-    fn sanitize_cursor_position(&mut self) {
+    pub(crate) fn sanitize_cursor_position(&mut self) {
         if self.cursor_index.y >= self.lines_count {
             self.set_cursor_y(self.lines_count - 1);
         }
@@ -331,13 +331,13 @@ impl TextEditor {
     }
 
     #[inline]
-    fn line_index_from_line_y(&self, line_y: f32) -> usize {
+    pub(crate) fn line_index_from_line_y(&self, line_y: f32) -> usize {
         // line_y is from the virtual scroll rect, need to add the scroll offset y to get the actual position.
         ((line_y + self.scroll_offset.y) / self.line_height) as usize
     }
 
     #[inline]
-    fn y_to_index(&self, y: f32) -> usize {
+    pub(crate) fn y_to_index(&self, y: f32) -> usize {
         // convert y to line_number
         // e.g: line_height = 10; (thus: line min.y = 10, line max.y = 20)
         // if y = 15 then line_number = 1 + 1
@@ -346,17 +346,17 @@ impl TextEditor {
     }
 
     #[inline]
-    fn x_to_index(&self, x: f32) -> usize {
+    pub(crate) fn x_to_index(&self, x: f32) -> usize {
         ((x) / (self.char_width / 2.0)) as usize
     }
 
     #[inline]
-    fn line_at(&self, y: f32) -> &str {
+    pub(crate) fn line_at(&self, y: f32) -> &str {
         self.split[self.y_to_index(y)].as_str()
     }
 
     #[inline]
-    fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
+    pub(crate) fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
         Pos::<f32> {
             x: self.index_to_x(index.x),
             y: self.index_to_y(index.y),
@@ -364,76 +364,38 @@ impl TextEditor {
     }
 
     #[inline]
-    fn index_to_y(&self, index: usize) -> f32 {
+    pub(crate) fn index_to_y(&self, index: usize) -> f32 {
         index as f32 * self.line_height
     }
 
     #[inline]
-    fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
+    pub(crate) fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
         // caller need to ensure that index is greater than first_visible_index
         (index - first_visible_index) as f32 * self.line_height
     }
 
     #[inline]
-    fn index_to_x(&self, index: usize) -> f32 {
+    pub(crate) fn index_to_x(&self, index: usize) -> f32 {
         index as f32 * (self.char_width / 2.0) + (self.line_x_offset())
     }
 
     #[inline]
-    fn set_cursor_y(&mut self, new_value: usize) {
+    pub(crate) fn set_cursor_y(&mut self, new_value: usize) {
         self.cursor_index.y = new_value;
         self.cursor_pos.y = self.index_to_y(self.cursor_index.y);
         self.sanitize_cursor_position();
     }
 
     #[inline]
-    fn set_cursor_x(&mut self, new_value: usize) {
+    pub(crate) fn set_cursor_x(&mut self, new_value: usize) {
         self.cursor_index.x = new_value;
         self.cursor_pos.x = self.index_to_x(self.cursor_index.x);
         self.sanitize_cursor_position();
     }
 
     #[inline]
-    fn line_x_offset(&self) -> f32 {
+    pub(crate) fn line_x_offset(&self) -> f32 {
         self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
-    }
-
-    fn set_selection(&mut self) {
-        let mut start_index = self.start_dragged_index.clone();
-        let mut end_index = self.stop_dragged_index.clone();
-        if self.start_dragged_index.y > self.stop_dragged_index.y { // user can drag selection from bottom to top
-            start_index = self.stop_dragged_index.clone();
-            end_index = self.start_dragged_index.clone();
-        }
-        if start_index.y == end_index.y && start_index.x > end_index.x { // user can drag selection from right to left
-            let x = start_index.x;
-            start_index.x = end_index.x;
-            end_index.x = x;
-        }
-        if start_index.y >= self.lines_count {
-            start_index.y = self.lines_count - 1;
-        }
-        if end_index.y >= self.lines_count {
-            end_index.y = self.lines_count - 1;
-        }
-        let line_len = self.split[start_index.y].len();
-        if start_index.x > line_len {
-            start_index.x = line_len;
-        }
-        let line_len = self.split[end_index.y].len();
-        if end_index.x > line_len {
-            end_index.x = line_len;
-        }
-        self.selection_start_index = start_index;
-        self.selection_end_index = end_index;
-    }
-
-    fn is_single_line_selection(&self) -> bool {
-        self.selection_start_index.y == self.selection_end_index.y
-    }
-
-    fn is_two_lines_selection(&self) -> bool {
-        self.selection_start_index.y + 1 == self.selection_end_index.y
     }
 
     fn count_digit(number: usize) -> usize {
@@ -477,9 +439,6 @@ impl TextEditor {
     fn paint_debug_char(&self, top: f32, mut shapes: &mut Vec<Shape>, i: usize, line_number: usize, frag: &String) {
         if line_number - 1 == self.cursor_index.y {
             for j in 0..frag.len() {
-                // if j as f32 * self.char_width < gutter_width {
-                //     continue;
-                // }
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: emath::Rect {
                         min: Pos2 { x: self.text_editor_viewport.min.x + j as f32 * self.char_width / 2.0, y: top + (self.line_height) * (i) as f32 },
@@ -527,7 +486,99 @@ impl TextEditor {
             fill: Color32::RED,
             stroke: Default::default(),
         })
+
     }
+
+    fn gutter(&mut self, ui: &mut Ui, gutter_rect: Rect, first_line_index: usize, last_line_index: usize) {
+        let mut brush_mut = self.glyph_brush_line_number.as_ref().lock().unwrap();
+        let numbers = (first_line_index..last_line_index).map(|line_number| (line_number, format!("{}\n", line_number + 1))).collect::<Vec<(usize, String)>>();
+        brush_mut.queue(glow_glyph::Section {
+            screen_position: (0.0, 0.0),
+            text: numbers.iter().map(|(line_number, text)| {
+                let mut color = [0.0, 0.0, 0.0, 1.0];
+                if *line_number == self.cursor_index.y {
+                    color = [1.0, 0.0, 0.0, 1.0];
+                }
+                Text::default()
+                    .with_text(text.as_str())
+                    .with_color(color)
+                    .with_scale(self.scale)
+            }).collect::<Vec<Text>>(),
+            ..Section::default()
+        });
+        drop(brush_mut);
+        ui.allocate_ui_at_rect(gutter_rect, |ui| {
+            ui.painter().add(epaint::Shape::Rect(RectShape {
+                rect: gutter_rect,
+                rounding: Rounding::none(),
+                fill: Color32::LIGHT_GRAY,
+                stroke: Default::default(),
+            }));
+            let glyph_brush = self.glyph_brush_line_number.clone();
+            ui.painter().add(egui::epaint::PaintCallback {
+                rect: gutter_rect,
+                callback: std::sync::Arc::new(move |render_ctx| {
+                    if let Some(painter) = render_ctx.downcast_ref::<egui_glow::Painter>() {
+                        let mut brush_mut = glyph_brush.lock().unwrap();
+                        brush_mut.draw_queued(&painter.gl(),
+                                              (gutter_rect.max.x - gutter_rect.min.x) as u32, (gutter_rect.max.y - gutter_rect.min.y) as u32)
+                            .expect("Draw queued");
+                    } else {
+                        eprintln!("Can't do custom painting because we are not using a glow context");
+                    }
+                }),
+            });
+        });
+    }
+}
+
+trait Selection {
+    fn set_selection(&mut self);
+    fn is_single_line_selection(&self) -> bool;
+    fn is_two_lines_selection(&self) -> bool;
+    fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape>;
+}
+
+impl Selection for TextEditor {
+
+    fn set_selection(&mut self) {
+        let mut start_index = self.start_dragged_index.clone();
+        let mut end_index = self.stop_dragged_index.clone();
+        if self.start_dragged_index.y > self.stop_dragged_index.y { // user can drag selection from bottom to top
+            start_index = self.stop_dragged_index.clone();
+            end_index = self.start_dragged_index.clone();
+        }
+        if start_index.y == end_index.y && start_index.x > end_index.x { // user can drag selection from right to left
+            let x = start_index.x;
+            start_index.x = end_index.x;
+            end_index.x = x;
+        }
+        if start_index.y >= self.lines_count {
+            start_index.y = self.lines_count - 1;
+        }
+        if end_index.y >= self.lines_count {
+            end_index.y = self.lines_count - 1;
+        }
+        let line_len = self.split[start_index.y].len();
+        if start_index.x > line_len {
+            start_index.x = line_len;
+        }
+        let line_len = self.split[end_index.y].len();
+        if end_index.x > line_len {
+            end_index.x = line_len;
+        }
+        self.selection_start_index = start_index;
+        self.selection_end_index = end_index;
+    }
+
+    fn is_single_line_selection(&self) -> bool {
+        self.selection_start_index.y == self.selection_end_index.y
+    }
+
+    fn is_two_lines_selection(&self) -> bool {
+        self.selection_start_index.y + 1 == self.selection_end_index.y
+    }
+
 
     fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape> {
         if self.is_single_line_selection() { // single line selection
@@ -535,7 +586,7 @@ impl TextEditor {
                 return vec![];
             }
             vec![
-                epaint::Shape::Rect(RectShape {
+                Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.index_to_x(self.selection_start_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) },
                         max: Pos2 { x: self.index_to_x(self.selection_end_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) + self.line_height },
@@ -606,47 +657,5 @@ impl TextEditor {
             }
             return shapes;
         }
-    }
-
-    fn gutter(&mut self, ui: &mut Ui, gutter_rect: Rect, first_line_index: usize, last_line_index: usize) {
-        let mut brush_mut = self.glyph_brush_line_number.as_ref().lock().unwrap();
-        let numbers = (first_line_index..last_line_index).map(|line_number| (line_number, format!("{}\n", line_number + 1))).collect::<Vec<(usize, String)>>();
-        brush_mut.queue(glow_glyph::Section {
-            screen_position: (0.0, 0.0),
-            text: numbers.iter().map(|(line_number, text)| {
-                let mut color = [0.0, 0.0, 0.0, 1.0];
-                if *line_number == self.cursor_index.y {
-                    color = [1.0, 0.0, 0.0, 1.0];
-                }
-                Text::default()
-                    .with_text(text.as_str())
-                    .with_color(color)
-                    .with_scale(self.scale)
-            }).collect::<Vec<Text>>(),
-            ..Section::default()
-        });
-        drop(brush_mut);
-        ui.allocate_ui_at_rect(gutter_rect, |ui| {
-            ui.painter().add(epaint::Shape::Rect(RectShape {
-                rect: gutter_rect,
-                rounding: Rounding::none(),
-                fill: Color32::LIGHT_GRAY,
-                stroke: Default::default(),
-            }));
-            let glyph_brush = self.glyph_brush_line_number.clone();
-            ui.painter().add(egui::epaint::PaintCallback {
-                rect: gutter_rect,
-                callback: std::sync::Arc::new(move |render_ctx| {
-                    if let Some(painter) = render_ctx.downcast_ref::<egui_glow::Painter>() {
-                        let mut brush_mut = glyph_brush.lock().unwrap();
-                        brush_mut.draw_queued(&painter.gl(),
-                                              (gutter_rect.max.x - gutter_rect.min.x) as u32, (gutter_rect.max.y - gutter_rect.min.y) as u32)
-                            .expect("Draw queued");
-                    } else {
-                        eprintln!("Can't do custom painting because we are not using a glow context");
-                    }
-                }),
-            });
-        });
     }
 }
