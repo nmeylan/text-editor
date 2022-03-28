@@ -22,25 +22,29 @@ use eframe::{egui, epi, epaint, emath};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
 
 pub struct TextEditor {
-    pub(crate)split: Vec<String>,
-    pub(crate)glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
-    pub(crate)glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
-    pub(crate)scroll_offset: Pos<f32>,
-    pub(crate)lines_count: usize,
-    pub(crate)char_width: f32,
-    pub(crate)line_height: f32,
-    pub(crate)scale: f32,
-    pub(crate)gutter_width: f32,
-    pub(crate)has_pressed_arrow_key: bool,
-    pub(crate)text_editor_viewport: Rect,
+    split: Vec<String>,
+    glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
+    glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
+    scroll_offset: Pos<f32>,
+    lines_count: usize,
+    char_width: f32,
+    line_height: f32,
+    scale: f32,
+    gutter_width: f32,
+    has_pressed_arrow_key: bool,
+    text_editor_viewport: Rect,
     // Position
-    pub(crate)cursor_index: Pos<usize>,
-    pub(crate)cursor_pos: Pos<f32>,
-    pub(crate)start_dragged_index: Pos<usize>,
-    pub(crate)stop_dragged_index: Pos<usize>,
-    pub(crate)selection_start_index: Pos<usize>,
-    pub(crate)selection_end_index: Pos<usize>,
-
+    cursor_index: Pos<usize>,
+    cursor_pos: Pos<f32>,
+    start_dragged_index: Pos<usize>,
+    stop_dragged_index: Pos<usize>,
+    selection_start_index: Pos<usize>,
+    selection_end_index: Pos<usize>,
+    // matching open-close characters
+    opening_char: Option<char>,
+    closing_char: Option<char>,
+    opening_char_index: Option<Pos<usize>>,
+    closing_char_index: Option<Pos<usize>>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -106,11 +110,88 @@ impl TextEditor {
                     let mut shapes = vec![];
                     let mut text_line = vec![];
                     let mut max_char_count = 0;
-                    for frag in self.split[first_line_index..last_line_index].iter() {
+                    let mut opening_char_occurrence = 0;
+                    let should_find_opening = self.closing_char.is_some() && self.opening_char.is_none();
+                    if should_find_opening {
+                        for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().rev().enumerate() {
+                            let absolute_line_index = last_line_index - relative_line_index;
+                            if self.closing_char.is_some() && self.opening_char.is_none() {
+                                let closing_char_index = self.closing_char_index.as_ref().unwrap();
+                                if absolute_line_index <= closing_char_index.y {
+                                    frag.chars().rev().enumerate().for_each(|(i, c)| {
+                                        if c == '{' && opening_char_occurrence == 0 {
+                                            self.opening_char = Some('{');
+                                            self.opening_char_index = Some(Pos {
+                                                x: frag.len() - i - 1,
+                                                y: absolute_line_index - 1,
+                                            });
+                                            return;
+                                        } else if c == '{' {
+                                            opening_char_occurrence -= 1;
+                                        }
+                                        if c == '}' && (absolute_line_index != closing_char_index.y || i != closing_char_index.x) {
+                                            opening_char_occurrence += 1;
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().enumerate() {
+                        let absolute_line_index = relative_line_index + first_line_index;
+                        if self.opening_char.is_some() && self.closing_char.is_none() {
+                            let opening_char_index = self.opening_char_index.as_ref().unwrap();
+                            if absolute_line_index >= opening_char_index.y {
+                                frag.chars().enumerate().for_each(|(i, c)| {
+                                    if c == '}' && opening_char_occurrence == 0 {
+                                        self.closing_char = Some('}');
+                                        self.closing_char_index = Some(Pos {
+                                            x: i + 1,
+                                            y: absolute_line_index,
+                                        });
+                                        return;
+                                    } else if c == '}' {
+                                        opening_char_occurrence -= 1;
+                                    }
+                                    if c == '{' && (absolute_line_index != opening_char_index.y || i != opening_char_index.x) {
+                                        opening_char_occurrence += 1;
+                                    }
+                                });
+                            }
+                        }
                         if max_char_count < frag.len() {
                             max_char_count = frag.len();
                         }
                         text_line.push(format!("{}\n", frag));
+                    }
+
+                    if self.opening_char_index.is_some() {
+                        let opening_char_index = self.opening_char_index.as_ref().unwrap();
+                        if opening_char_index.y >= first_line_index {
+                            shapes.push(epaint::Shape::Rect(RectShape {
+                                rect: Rect {
+                                    min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
+                                    max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
+                                },
+                                rounding: Rounding::none(),
+                                fill: Color32::GREEN,
+                                stroke: Default::default(),
+                            }));
+                        }
+                    }
+                    if self.closing_char_index.is_some() {
+                        let closing_char_index = self.closing_char_index.as_ref().unwrap();
+                        if closing_char_index.y >= first_line_index && closing_char_index.x > 0 {
+                            shapes.push(epaint::Shape::Rect(RectShape {
+                                rect: Rect {
+                                    min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
+                                    max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
+                                },
+                                rounding: Rounding::none(),
+                                fill: Color32::GREEN,
+                                stroke: Default::default(),
+                            }));
+                        }
                     }
 
                     let mut brush_mut = self.glyph_brush_text_editor.as_ref().lock().unwrap();
@@ -161,7 +242,6 @@ impl TextEditor {
                             let cursor_pos = maybe_pos.unwrap();
                             self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
                             self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
-                            self.sanitize_cursor_position();
                         }
                         response.request_focus();
                     }
@@ -248,6 +328,10 @@ impl TextEditor {
             stop_dragged_index: Default::default(),
             selection_start_index: Default::default(),
             selection_end_index: Default::default(),
+            opening_char: None,
+            closing_char: None,
+            opening_char_index: Default::default(),
+            closing_char_index: Default::default(),
         }
     }
 
@@ -319,8 +403,43 @@ impl TextEditor {
         }
     }
 
+    fn after_cursor_position_change(&mut self) {
+        if self.cursor_index.x == 0 {
+            self.opening_char_index = None;
+            self.opening_char = None;
+            self.closing_char = None;
+            self.closing_char_index = None;
+            return;
+        }
+        let maybe_char = self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1);
+        if maybe_char.is_some() {
+            if maybe_char.unwrap() == '{' {
+                let mut index = self.cursor_index.clone();
+                index.x = index.x - 1;
+                self.opening_char = maybe_char;
+                self.opening_char_index = Some(index);
+                self.closing_char = None;
+                self.closing_char_index = None;
+                return;
+            } else if maybe_char.unwrap() == '}' {
+                let mut index = self.cursor_index.clone();
+                index.x = index.x;
+                self.opening_char = None;
+                self.opening_char_index = None;
+                self.closing_char = maybe_char;
+                self.closing_char_index = Some(index);
+                return;
+            }
+        }
+        self.opening_char = None;
+        self.opening_char_index = None;
+        self.closing_char = None;
+        self.closing_char_index = None;
+        println!("char {:?}", self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1));
+    }
+
     #[inline]
-    pub(crate) fn sanitize_cursor_position(&mut self) {
+    fn sanitize_cursor_position(&mut self) {
         if self.cursor_index.y >= self.lines_count {
             self.set_cursor_y(self.lines_count - 1);
         }
@@ -331,13 +450,13 @@ impl TextEditor {
     }
 
     #[inline]
-    pub(crate) fn line_index_from_line_y(&self, line_y: f32) -> usize {
+    fn line_index_from_line_y(&self, line_y: f32) -> usize {
         // line_y is from the virtual scroll rect, need to add the scroll offset y to get the actual position.
         ((line_y + self.scroll_offset.y) / self.line_height) as usize
     }
 
     #[inline]
-    pub(crate) fn y_to_index(&self, y: f32) -> usize {
+    fn y_to_index(&self, y: f32) -> usize {
         // convert y to line_number
         // e.g: line_height = 10; (thus: line min.y = 10, line max.y = 20)
         // if y = 15 then line_number = 1 + 1
@@ -346,17 +465,17 @@ impl TextEditor {
     }
 
     #[inline]
-    pub(crate) fn x_to_index(&self, x: f32) -> usize {
+    fn x_to_index(&self, x: f32) -> usize {
         ((x) / (self.char_width / 2.0)) as usize
     }
 
     #[inline]
-    pub(crate) fn line_at(&self, y: f32) -> &str {
+    fn line_at(&self, y: f32) -> &str {
         self.split[self.y_to_index(y)].as_str()
     }
 
     #[inline]
-    pub(crate) fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
+    fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
         Pos::<f32> {
             x: self.index_to_x(index.x),
             y: self.index_to_y(index.y),
@@ -364,37 +483,45 @@ impl TextEditor {
     }
 
     #[inline]
-    pub(crate) fn index_to_y(&self, index: usize) -> f32 {
+    fn index_to_y(&self, index: usize) -> f32 {
         index as f32 * self.line_height
     }
 
     #[inline]
-    pub(crate) fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
+    fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
         // caller need to ensure that index is greater than first_visible_index
         (index - first_visible_index) as f32 * self.line_height
     }
 
     #[inline]
-    pub(crate) fn index_to_x(&self, index: usize) -> f32 {
+    fn index_to_x(&self, index: usize) -> f32 {
         index as f32 * (self.char_width / 2.0) + (self.line_x_offset())
     }
 
     #[inline]
-    pub(crate) fn set_cursor_y(&mut self, new_value: usize) {
+    fn set_cursor_y(&mut self, new_value: usize) {
+        if self.cursor_index.y == new_value {
+            return;
+        }
         self.cursor_index.y = new_value;
         self.cursor_pos.y = self.index_to_y(self.cursor_index.y);
         self.sanitize_cursor_position();
+        self.after_cursor_position_change();
     }
 
     #[inline]
-    pub(crate) fn set_cursor_x(&mut self, new_value: usize) {
+    fn set_cursor_x(&mut self, new_value: usize) {
+        if self.cursor_index.x == new_value {
+            return;
+        }
         self.cursor_index.x = new_value;
         self.cursor_pos.x = self.index_to_x(self.cursor_index.x);
         self.sanitize_cursor_position();
+        self.after_cursor_position_change();
     }
 
     #[inline]
-    pub(crate) fn line_x_offset(&self) -> f32 {
+    fn line_x_offset(&self) -> f32 {
         self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
     }
 
@@ -486,7 +613,6 @@ impl TextEditor {
             fill: Color32::RED,
             stroke: Default::default(),
         })
-
     }
 
     fn gutter(&mut self, ui: &mut Ui, gutter_rect: Rect, first_line_index: usize, last_line_index: usize) {
@@ -540,7 +666,6 @@ trait Selection {
 }
 
 impl Selection for TextEditor {
-
     fn set_selection(&mut self) {
         let mut start_index = self.start_dragged_index.clone();
         let mut end_index = self.stop_dragged_index.clone();

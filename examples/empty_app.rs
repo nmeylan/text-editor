@@ -11,7 +11,6 @@ fn main() {
 struct MyApp{}
 
 impl eframe::epi::App for MyApp {
-    #[elapsed_time::elapsed]
     fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.label("top panel");
