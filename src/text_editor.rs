@@ -6,6 +6,7 @@ use std::fmt::format;
 use std::default::Default;
 use std::detect::__is_feature_detected::sha;
 use std::fs;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -54,7 +55,6 @@ pub struct Pos<T> {
 }
 
 impl TextEditor {
-    #[elapsed_time::elapsed]
     pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         self.lines_count = self.split.len();
 
@@ -113,26 +113,29 @@ impl TextEditor {
                     let mut opening_char_occurrence = 0;
                     let should_find_opening = self.closing_char.is_some() && self.opening_char.is_none();
                     if should_find_opening {
-                        for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().rev().enumerate() {
+                        for (relative_line_index, frag) in self.split[first_line_index..last_line_index + 1].iter().rev().enumerate() {
                             let absolute_line_index = last_line_index - relative_line_index;
                             if self.closing_char.is_some() && self.opening_char.is_none() {
                                 let closing_char_index = self.closing_char_index.as_ref().unwrap();
                                 if absolute_line_index <= closing_char_index.y {
-                                    frag.chars().rev().enumerate().for_each(|(i, c)| {
-                                        if c == '{' && opening_char_occurrence == 0 {
-                                            self.opening_char = Some('{');
-                                            self.opening_char_index = Some(Pos {
-                                                x: frag.len() - i - 1,
-                                                y: absolute_line_index - 1,
-                                            });
-                                            return;
-                                        } else if c == '{' {
+                                    for (i, c) in frag.chars().rev().enumerate() {
+                                        if closing_char_index.y == absolute_line_index && frag.len() - i > closing_char_index.x {
+                                            continue;
+                                        }
+                                        if c == self.closing_char.unwrap() {
+                                            opening_char_occurrence += 1;
+                                        } else if Self::matching_opening_char(self.closing_char.unwrap()) == c {
                                             opening_char_occurrence -= 1;
                                         }
-                                        if c == '}' && (absolute_line_index != closing_char_index.y || i != closing_char_index.x) {
-                                            opening_char_occurrence += 1;
+                                        if Self::matching_opening_char(self.closing_char.unwrap()) == c && opening_char_occurrence == 0 {
+                                            self.opening_char = Some(c);
+                                            self.opening_char_index = Some(Pos {
+                                                x: frag.len() - i - 1,
+                                                y: absolute_line_index,
+                                            });
+                                            break;
                                         }
-                                    });
+                                    }
                                 }
                             }
                         }
@@ -142,21 +145,24 @@ impl TextEditor {
                         if self.opening_char.is_some() && self.closing_char.is_none() {
                             let opening_char_index = self.opening_char_index.as_ref().unwrap();
                             if absolute_line_index >= opening_char_index.y {
-                                frag.chars().enumerate().for_each(|(i, c)| {
-                                    if c == '}' && opening_char_occurrence == 0 {
-                                        self.closing_char = Some('}');
+                                for (i, c) in frag.chars().enumerate() {
+                                    if opening_char_index.y == absolute_line_index && i < opening_char_index.x {
+                                        continue;
+                                    }
+                                    if c == self.opening_char.unwrap() {
+                                        opening_char_occurrence += 1;
+                                    } else if Self::matching_closing_char(self.opening_char.unwrap()) == c {
+                                        opening_char_occurrence -= 1;
+                                    }
+                                    if Self::matching_closing_char(self.opening_char.unwrap()) == c && opening_char_occurrence == 0 {
+                                        self.closing_char = Some(c);
                                         self.closing_char_index = Some(Pos {
                                             x: i + 1,
                                             y: absolute_line_index,
                                         });
-                                        return;
-                                    } else if c == '}' {
-                                        opening_char_occurrence -= 1;
+                                        break;
                                     }
-                                    if c == '{' && (absolute_line_index != opening_char_index.y || i != opening_char_index.x) {
-                                        opening_char_occurrence += 1;
-                                    }
-                                });
+                                };
                             }
                         }
                         if max_char_count < frag.len() {
@@ -165,34 +171,7 @@ impl TextEditor {
                         text_line.push(format!("{}\n", frag));
                     }
 
-                    if self.opening_char_index.is_some() {
-                        let opening_char_index = self.opening_char_index.as_ref().unwrap();
-                        if opening_char_index.y >= first_line_index {
-                            shapes.push(epaint::Shape::Rect(RectShape {
-                                rect: Rect {
-                                    min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
-                                    max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
-                                },
-                                rounding: Rounding::none(),
-                                fill: Color32::GREEN,
-                                stroke: Default::default(),
-                            }));
-                        }
-                    }
-                    if self.closing_char_index.is_some() {
-                        let closing_char_index = self.closing_char_index.as_ref().unwrap();
-                        if closing_char_index.y >= first_line_index && closing_char_index.x > 0 {
-                            shapes.push(epaint::Shape::Rect(RectShape {
-                                rect: Rect {
-                                    min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
-                                    max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
-                                },
-                                rounding: Rounding::none(),
-                                fill: Color32::GREEN,
-                                stroke: Default::default(),
-                            }));
-                        }
-                    }
+                    self.paint_matching_opening_closing_char(first_line_index, &mut shapes);
 
                     let mut brush_mut = self.glyph_brush_text_editor.as_ref().lock().unwrap();
                     let section = glow_glyph::Section {
@@ -413,7 +392,7 @@ impl TextEditor {
         }
         let maybe_char = self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1);
         if maybe_char.is_some() {
-            if maybe_char.unwrap() == '{' {
+            if maybe_char.unwrap() == '{' || maybe_char.unwrap() == '(' || maybe_char.unwrap() == '[' {
                 let mut index = self.cursor_index.clone();
                 index.x = index.x - 1;
                 self.opening_char = maybe_char;
@@ -421,7 +400,7 @@ impl TextEditor {
                 self.closing_char = None;
                 self.closing_char_index = None;
                 return;
-            } else if maybe_char.unwrap() == '}' {
+            } else if maybe_char.unwrap() == '}' || maybe_char.unwrap() == ')' || maybe_char.unwrap() == ']' {
                 let mut index = self.cursor_index.clone();
                 index.x = index.x;
                 self.opening_char = None;
@@ -435,7 +414,6 @@ impl TextEditor {
         self.opening_char_index = None;
         self.closing_char = None;
         self.closing_char_index = None;
-        println!("char {:?}", self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1));
     }
 
     #[inline]
@@ -525,6 +503,24 @@ impl TextEditor {
         self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
     }
 
+    fn matching_closing_char(opening: char) -> char {
+        match opening {
+            '{' => '}',
+            '(' => ')',
+            '[' => ']',
+            _ => opening
+        }
+    }
+
+    fn matching_opening_char(closing: char) -> char {
+        match closing {
+            '}' => '{',
+            ')' => '(',
+            ']' => '[',
+            _ => closing
+        }
+    }
+
     fn count_digit(number: usize) -> usize {
         if number >= 100_000_000 {
             9
@@ -544,6 +540,37 @@ impl TextEditor {
             2
         } else {
             1
+        }
+    }
+
+    fn paint_matching_opening_closing_char(&self, first_line_index: usize, mut shapes: &mut Vec<Shape>) {
+        if self.opening_char_index.is_some() {
+            let opening_char_index = self.opening_char_index.as_ref().unwrap();
+            if opening_char_index.y >= first_line_index {
+                shapes.push(epaint::Shape::Rect(RectShape {
+                    rect: Rect {
+                        min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
+                        max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
+                    },
+                    rounding: Rounding::none(),
+                    fill: Color32::GREEN,
+                    stroke: Default::default(),
+                }));
+            }
+        }
+        if self.closing_char_index.is_some() {
+            let closing_char_index = self.closing_char_index.as_ref().unwrap();
+            if closing_char_index.y >= first_line_index && closing_char_index.x > 0 {
+                shapes.push(epaint::Shape::Rect(RectShape {
+                    rect: Rect {
+                        min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
+                        max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
+                    },
+                    rounding: Rounding::none(),
+                    fill: Color32::GREEN,
+                    stroke: Default::default(),
+                }));
+            }
         }
     }
 
