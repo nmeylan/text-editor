@@ -352,13 +352,14 @@ impl TextEditor {
                 if self.split[self.cursor_index.y].len() > 0 && self.cursor_index.x > 0 {
                     self.split[self.cursor_index.y].remove(self.cursor_index.x - 1);
                     self.set_cursor_x(self.cursor_index.x - 1);
-                } else if self.cursor_index.x == 0 {
+                } else if self.cursor_index.x == 0 && self.cursor_index.y > 0 {
+                    let previous_line_len = self.split[self.cursor_index.y - 1].len();
                     let line = self.split.remove(self.cursor_index.y);
                     if !line.is_empty() {
                         self.split[self.cursor_index.y - 1].push_str(line.as_str());
                     }
                     self.set_cursor_y(self.cursor_index.y - 1);
-                    self.set_cursor_x(self.split[self.cursor_index.y].len());
+                    self.set_cursor_x(previous_line_len);
                 }
             }
             Key::Delete => {
@@ -375,8 +376,13 @@ impl TextEditor {
                 }
             }
             Key::Enter => {
-                self.split.insert(self.cursor_index.y + 1, String::default());
+                let line = &self.split[self.cursor_index.y].clone();
+                let line_start = &line[0..self.cursor_index.x];
+                let line_end = &line[self.cursor_index.x..line.len()];
+                self.split[self.cursor_index.y] = line_start.to_string();
+                self.split.insert(self.cursor_index.y + 1, line_end.to_string());
                 self.set_cursor_y(self.cursor_index.y + 1);
+                self.set_cursor_x(0);
             }
             _ => {}
         }
