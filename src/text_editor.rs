@@ -37,10 +37,10 @@ pub struct TextEditor {
     // Position
     cursor_index: Pos<usize>,
     cursor_pos: Pos<f32>,
-    start_dragged_index: Pos<usize>,
-    stop_dragged_index: Pos<usize>,
-    selection_start_index: Pos<usize>,
-    selection_end_index: Pos<usize>,
+    start_dragged_index: Option<Pos<usize>>,
+    stop_dragged_index: Option<Pos<usize>>,
+    selection_start_index: Option<Pos<usize>>,
+    selection_end_index: Option<Pos<usize>>,
     // matching open-close characters
     opening_char: Option<char>,
     closing_char: Option<char>,
@@ -221,19 +221,20 @@ impl TextEditor {
                             let cursor_pos = maybe_pos.unwrap();
                             self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
                             self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
+                            self.reset_selection();
                         }
                         response.request_focus();
                     }
                     if response.drag_started() {
                         let maybe_pos = ui.input().pointer.interact_pos();
                         let cursor_pos = maybe_pos.unwrap();
-                        self.start_dragged_index = Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) };
-                        self.stop_dragged_index = Pos::default();
+                        self.start_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
+                        self.stop_dragged_index = None;
                     }
                     if response.dragged() {
                         let maybe_pos = ui.input().pointer.interact_pos();
                         let cursor_pos = maybe_pos.unwrap();
-                        self.stop_dragged_index = Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) };
+                        self.stop_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
                         self.set_selection();
                         self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
                         self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
@@ -243,7 +244,11 @@ impl TextEditor {
                         match event {
                             Event::Key { key, pressed: true, .. } => self.on_key_press(*key),
                             Event::Text(text_to_insert) => {
-                                self.split[self.cursor_index.y].insert_str(self.cursor_index.x, text_to_insert);
+                                if self.has_selection() {
+                                    self.key_press_on_selection(Some(text_to_insert));
+                                } else {
+                                    self.split[self.cursor_index.y].insert_str(self.cursor_index.x, text_to_insert);
+                                }
                                 self.set_cursor_x(self.cursor_index.x + text_to_insert.len());
                             }
                             _ => {}
@@ -333,6 +338,7 @@ impl TextEditor {
     fn on_key_press(&mut self, key: Key) {
         match key {
             Key::ArrowDown | Key::ArrowUp => {
+                self.reset_selection();
                 self.has_pressed_arrow_key = true;
                 if key == Key::ArrowDown {
                     self.set_cursor_y(self.cursor_index.y + 1);
@@ -341,6 +347,7 @@ impl TextEditor {
                 }
             }
             Key::ArrowLeft | Key::ArrowRight => {
+                self.reset_selection();
                 self.has_pressed_arrow_key = true;
                 if key == Key::ArrowRight {
                     self.set_cursor_x(self.cursor_index.x + 1);
@@ -349,7 +356,9 @@ impl TextEditor {
                 }
             }
             Key::Backspace => {
-                if self.split[self.cursor_index.y].len() > 0 && self.cursor_index.x > 0 {
+                if self.has_selection() {
+                    self.key_press_on_selection(None);
+                } else if self.split[self.cursor_index.y].len() > 0 && self.cursor_index.x > 0 {
                     self.split[self.cursor_index.y].remove(self.cursor_index.x - 1);
                     self.set_cursor_x(self.cursor_index.x - 1);
                 } else if self.cursor_index.x == 0 && self.cursor_index.y > 0 {
@@ -363,7 +372,9 @@ impl TextEditor {
                 }
             }
             Key::Delete => {
-                if self.split[self.cursor_index.y].len() > self.cursor_index.x {
+                if self.has_selection() {
+                    self.key_press_on_selection(None);
+                } else if self.split[self.cursor_index.y].len() > self.cursor_index.x {
                     self.split[self.cursor_index.y].remove(self.cursor_index.x);
                 } else if self.split[self.cursor_index.y].len() == 0 {
                     self.split.remove(self.cursor_index.y);
@@ -376,6 +387,9 @@ impl TextEditor {
                 }
             }
             Key::Enter => {
+                if self.has_selection() {
+                    self.key_press_on_selection(None);
+                }
                 let line = &self.split[self.cursor_index.y].clone();
                 let line_start = &line[0..self.cursor_index.x];
                 let line_end = &line[self.cursor_index.x..line.len()];
@@ -383,6 +397,7 @@ impl TextEditor {
                 self.split.insert(self.cursor_index.y + 1, line_end.to_string());
                 self.set_cursor_y(self.cursor_index.y + 1);
                 self.set_cursor_x(0);
+
             }
             _ => {}
         }
@@ -692,19 +707,28 @@ impl TextEditor {
 }
 
 trait Selection {
+    fn reset_selection(&mut self);
     fn set_selection(&mut self);
+    fn has_selection(&self) -> bool;
     fn is_single_line_selection(&self) -> bool;
     fn is_two_lines_selection(&self) -> bool;
     fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape>;
+    fn key_press_on_selection(&mut self, text_to_insert: Option<&str>);
 }
 
 impl Selection for TextEditor {
+    fn reset_selection(&mut self) {
+        self.selection_start_index = None;
+        self.selection_end_index = None;
+        self.start_dragged_index = None;
+        self.stop_dragged_index = None;
+    }
     fn set_selection(&mut self) {
-        let mut start_index = self.start_dragged_index.clone();
-        let mut end_index = self.stop_dragged_index.clone();
-        if self.start_dragged_index.y > self.stop_dragged_index.y { // user can drag selection from bottom to top
-            start_index = self.stop_dragged_index.clone();
-            end_index = self.start_dragged_index.clone();
+        let mut start_index = self.start_dragged_index.clone().unwrap();
+        let mut end_index = self.stop_dragged_index.clone().unwrap();
+        if self.start_dragged_index.as_ref().unwrap().y > self.stop_dragged_index.as_ref().unwrap().y { // user can drag selection from bottom to top
+            start_index = self.stop_dragged_index.clone().unwrap();
+            end_index = self.start_dragged_index.clone().unwrap();
         }
         if start_index.y == end_index.y && start_index.x > end_index.x { // user can drag selection from right to left
             let x = start_index.x;
@@ -725,29 +749,41 @@ impl Selection for TextEditor {
         if end_index.x > line_len {
             end_index.x = line_len;
         }
-        self.selection_start_index = start_index;
-        self.selection_end_index = end_index;
+        self.selection_start_index = Some(start_index);
+        self.selection_end_index = Some(end_index);
+    }
+
+    fn has_selection(&self) -> bool {
+        return self.selection_start_index.is_some() && self.selection_end_index.is_some();
     }
 
     fn is_single_line_selection(&self) -> bool {
-        self.selection_start_index.y == self.selection_end_index.y
+        if !self.has_selection() {
+            return false;
+        }
+        self.selection_start_index.as_ref().unwrap().y == self.selection_end_index.as_ref().unwrap().y
     }
 
     fn is_two_lines_selection(&self) -> bool {
-        self.selection_start_index.y + 1 == self.selection_end_index.y
+        if !self.has_selection() {
+            return false;
+        }
+        self.selection_start_index.as_ref().unwrap().y + 1 == self.selection_end_index.as_ref().unwrap().y
     }
 
-
     fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape> {
+        if !self.has_selection() {
+            return vec![];
+        }
         if self.is_single_line_selection() { // single line selection
-            if self.selection_start_index.y < first_line_index { // if selection is not visible
+            if self.selection_start_index.as_ref().unwrap().y < first_line_index { // if selection is not visible
                 return vec![];
             }
             vec![
                 Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) + self.line_height },
+                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
+                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     fill: Color32::LIGHT_BLUE,
                     rounding: Rounding::none(),
@@ -756,22 +792,22 @@ impl Selection for TextEditor {
             ]
         } else if self.is_two_lines_selection() { // two lines selection
             let mut shapes = vec![];
-            if self.selection_start_index.y >= first_line_index {
+            if self.selection_start_index.as_ref().unwrap().y >= first_line_index {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) + self.line_height },
+                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
+                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     fill: Color32::LIGHT_BLUE,
                     rounding: Rounding::none(),
                     stroke: Default::default(),
                 }))
             }
-            if self.selection_end_index.y >= first_line_index {
+            if self.selection_end_index.as_ref().unwrap().y >= first_line_index {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.y, first_line_index) + self.line_height },
+                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
+                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::LIGHT_BLUE,
@@ -781,11 +817,11 @@ impl Selection for TextEditor {
             return shapes;
         } else {
             let mut shapes = vec![];
-            if self.selection_start_index.y >= first_line_index {
+            if self.selection_start_index.as_ref().unwrap().y >= first_line_index {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.y, first_line_index) + self.line_height },
+                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
+                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::LIGHT_BLUE,
@@ -793,11 +829,11 @@ impl Selection for TextEditor {
                 }))
             }
 
-            if self.selection_end_index.y >= first_line_index {
+            if self.selection_end_index.as_ref().unwrap().y >= first_line_index {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_start_index.y + 1).max(first_line_index), first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_end_index.y - 1).max(first_line_index), first_line_index) + self.line_height },
+                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_start_index.as_ref().unwrap().y + 1).max(first_line_index), first_line_index) },
+                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_end_index.as_ref().unwrap().y - 1).max(first_line_index), first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::LIGHT_BLUE,
@@ -805,8 +841,8 @@ impl Selection for TextEditor {
                 }));
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.y, first_line_index) + self.line_height },
+                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
+                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::LIGHT_BLUE,
@@ -815,5 +851,35 @@ impl Selection for TextEditor {
             }
             return shapes;
         }
+    }
+
+    fn key_press_on_selection(&mut self, text_to_insert: Option<&str>) {
+        let selection_start_index = self.selection_start_index.as_ref().unwrap().clone();
+        let selection_end_index = self.selection_end_index.as_ref().unwrap().clone();
+        if self.is_single_line_selection() {
+            let line = &self.split[selection_start_index.y];
+            self.split[selection_start_index.y] = format!("{}{}{}", &line[0..selection_start_index.x],
+                                                          text_to_insert.unwrap_or(""),
+                                                          &line[selection_end_index.x..line.len()]);
+        } else if self.is_two_lines_selection() {
+            let line = &self.split[selection_start_index.y];
+            let new_line_start = String::from(&line[0..selection_start_index.x]);
+            self.split.remove(selection_start_index.y);
+            let line = &self.split[selection_start_index.y];
+            let new_line_end = String::from(&line[selection_end_index.x..line.len()]);
+            self.split[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
+        } else {
+            let line = &self.split[selection_start_index.y];
+            let new_line_start = String::from(&line[0..selection_start_index.x]);
+            let line = &self.split[selection_end_index.y];
+            let new_line_end = String::from(&line[selection_end_index.x..line.len()]);
+            let text_start = &self.split[0..selection_start_index.y];
+            let text_end = &self.split[selection_end_index.y..self.split.len()];
+            self.split = [text_start, text_end].concat();
+            self.split[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
+        }
+        self.set_cursor_y(selection_start_index.y);
+        self.set_cursor_x(selection_start_index.x);
+        self.reset_selection();
     }
 }
