@@ -43,6 +43,7 @@ pub struct TextEditor {
     selection_start_index: Option<Pos<usize>>,
     selection_end_index: Option<Pos<usize>>,
     highlighted_word: Option<String>,
+    word_occurrences: Vec<(Pos<usize>, Pos<usize>)>,
     // matching open-close characters
     opening_char: Option<char>,
     closing_char: Option<char>,
@@ -113,6 +114,7 @@ impl TextEditor {
                     let mut text_line = vec![];
                     let mut max_char_count = 0;
                     let mut opening_char_occurrence = 0;
+                    self.word_occurrences = vec![];
                     let should_find_opening = self.closing_char.is_some() && self.opening_char.is_none();
                     if should_find_opening {
                         for (relative_line_index, frag) in self.split[first_line_index..last_line_index + 1].iter().rev().enumerate() {
@@ -144,6 +146,37 @@ impl TextEditor {
                     }
                     for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().enumerate() {
                         let absolute_line_index = relative_line_index + first_line_index;
+
+                        let mut should_search_word = false;
+                        let mut word_char_search_index = 0;
+                        let mut start_index = 0;
+                        if self.highlighted_word.is_some() {
+                            let highlighted_word = self.highlighted_word.as_ref().unwrap();
+                            for (i, c) in frag.chars().enumerate() {
+                                if Self::is_char_non_part_of_word(c) {
+                                    if word_char_search_index == highlighted_word.len() {
+                                        self.word_occurrences.push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: i, y: absolute_line_index }));
+                                    }
+                                    should_search_word = true;
+                                    word_char_search_index = 0;
+                                    start_index = i;
+                                    continue;
+                                }
+                                if should_search_word {
+                                    let word_char = highlighted_word.chars().nth(word_char_search_index);
+                                    if word_char.is_some() && word_char.unwrap() == c {
+                                        word_char_search_index += 1;
+                                    } else {
+                                        word_char_search_index = 0;
+                                        should_search_word = false;
+                                    }
+                                }
+                            }
+                            if word_char_search_index == highlighted_word.len() {
+                                self.word_occurrences.push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: frag.chars().count(), y: absolute_line_index }));
+                            }
+                        }
+
                         if self.opening_char.is_some() && self.closing_char.is_none() {
                             let opening_char_index = self.opening_char_index.as_ref().unwrap();
                             if absolute_line_index >= opening_char_index.y {
@@ -193,6 +226,8 @@ impl TextEditor {
                     }
                     // Paint matching {},[],() highlight
                     self.paint_matching_opening_closing_char(first_line_index, &mut shapes);
+
+                    self.paint_word_occurrences(first_line_index, &mut shapes);
 
                     ui.painter().extend(shapes);
 
@@ -279,7 +314,7 @@ impl TextEditor {
             let mut start_index = 0 as usize;
             let mut end_index = 0 as usize;
             for (i, c) in line.chars().enumerate() {
-                if !c.is_alphanumeric() && c != '_' && c!= '-' {
+                if Self::is_char_non_part_of_word(c) {
                     if i >= x_index {
                         end_index = i;
                         break;
@@ -291,11 +326,17 @@ impl TextEditor {
             if end_index == 0 {
                 end_index = line.len();
             }
-            self.selection_start_index = Some(Pos {x: start_index, y: y_index});
-            self.selection_end_index = Some(Pos {x: end_index, y: y_index});
-            self.highlighted_word = Some((&line[start_index..end_index]).to_string());
+            self.selection_start_index = Some(Pos { x: start_index, y: y_index });
+            self.selection_end_index = Some(Pos { x: end_index, y: y_index });
+            if end_index - start_index > 1 {
+                self.highlighted_word = Some((&line[start_index..end_index]).to_string());
+            }
             self.set_cursor_x(end_index);
         }
+    }
+
+    fn is_char_non_part_of_word(c: char) -> bool {
+        !c.is_alphanumeric() && c != '_' && c != '-'
     }
 
     fn handle_key_events(&mut self, events: &Vec<Event>) {
@@ -362,6 +403,7 @@ impl TextEditor {
             selection_start_index: Default::default(),
             selection_end_index: Default::default(),
             highlighted_word: None,
+            word_occurrences: vec![],
             opening_char: None,
             closing_char: None,
             opening_char_index: Default::default(),
@@ -638,6 +680,20 @@ impl TextEditor {
             2
         } else {
             1
+        }
+    }
+
+    fn paint_word_occurrences(&self, first_line_index: usize, mut shapes: &mut Vec<Shape>) {
+        for (start_pos, end_pos) in self.word_occurrences.iter() {
+            shapes.push(epaint::Shape::Rect(RectShape {
+                rect: Rect {
+                    min: Pos2 { x: self.index_to_x(start_pos.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(start_pos.y, first_line_index) },
+                    max: Pos2 { x: self.index_to_x(end_pos.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(start_pos.y, first_line_index) + self.line_height },
+                },
+                rounding: Rounding::none(),
+                fill: Color32::YELLOW,
+                stroke: Default::default(),
+            }));
         }
     }
 
