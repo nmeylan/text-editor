@@ -242,7 +242,7 @@ impl TextEditor {
                     let events = ui.input().events.clone();
                     for event in &events {
                         match event {
-                            Event::Key { key, pressed: true, .. } => self.on_key_press(*key),
+                            Event::Key { key, pressed: true, modifiers } => self.on_key_press(*key, modifiers),
                             Event::Text(text_to_insert) => {
                                 if self.has_selection() {
                                     self.key_press_on_selection(Some(text_to_insert));
@@ -335,24 +335,44 @@ impl TextEditor {
         last_line_index
     }
 
-    fn on_key_press(&mut self, key: Key) {
+    fn on_key_press(&mut self, key: Key, modifiers: &Modifiers) {
         match key {
             Key::ArrowDown | Key::ArrowUp => {
-                self.reset_selection();
+                if modifiers.shift {
+                    if self.start_dragged_index.is_none() {
+                        self.start_dragged_index = Some(self.cursor_index.clone());
+                    }
+                } else {
+                    self.reset_selection();
+                }
                 self.has_pressed_arrow_key = true;
                 if key == Key::ArrowDown {
                     self.set_cursor_y(self.cursor_index.y + 1);
                 } else if self.cursor_index.y > 0 {
                     self.set_cursor_y(self.cursor_index.y - 1);
                 }
+                if modifiers.shift {
+                    self.stop_dragged_index = Some(self.cursor_index.clone());
+                    self.set_selection();
+                }
             }
             Key::ArrowLeft | Key::ArrowRight => {
-                self.reset_selection();
+                if modifiers.shift {
+                    if self.start_dragged_index.is_none() {
+                        self.start_dragged_index = Some(self.cursor_index.clone());
+                    }
+                } else {
+                    self.reset_selection();
+                }
                 self.has_pressed_arrow_key = true;
                 if key == Key::ArrowRight {
                     self.set_cursor_x(self.cursor_index.x + 1);
                 } else if self.cursor_index.x > 0 {
                     self.set_cursor_x(self.cursor_index.x - 1);
+                }
+                if modifiers.shift {
+                    self.stop_dragged_index = Some(self.cursor_index.clone());
+                    self.set_selection();
                 }
             }
             Key::Backspace => {
