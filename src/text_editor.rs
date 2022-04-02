@@ -171,16 +171,11 @@ impl TextEditor {
                         text_line.push(format!("{}\n", frag));
                     }
 
-                    self.paint_matching_opening_closing_char(first_line_index, &mut shapes);
-
                     let mut brush_mut = self.glyph_brush_text_editor.as_ref().lock().unwrap();
                     let section = glow_glyph::Section {
                         screen_position: (0.0 - self.scroll_offset.x, 0.0),
                         text: text_line.iter().map(|line| {
-                            Text::default()
-                                .with_text(&line)
-                                .with_color([0.0, 0.0, 0.0, 1.0])
-                                .with_scale(self.scale)
+                            Text::default().with_text(&line).with_color([0.0, 0.0, 0.0, 1.0]).with_scale(self.scale)
                         }).collect::<Vec<Text>>(),
                         layout: glow_glyph::Layout::default_wrap(),
                         ..Section::default()
@@ -188,13 +183,18 @@ impl TextEditor {
                     brush_mut.queue(section);
                     drop(brush_mut);
 
+                    // Paint text selection
                     shapes.extend(self.selection_shapes(first_line_index));
+                    // Paint cursor
                     if self.cursor_index.y >= first_line_index {
                         shapes.push(self.cursor_shape(first_line_index));
                     }
+                    // Paint matching {},[],() highlight
+                    self.paint_matching_opening_closing_char(first_line_index, &mut shapes);
 
                     ui.painter().extend(shapes);
 
+                    // Paint text
                     let mut glyph_brush = self.glyph_brush_text_editor.clone();
                     ui.painter().add(egui::epaint::PaintCallback {
                         rect: self.text_editor_viewport,
@@ -216,44 +216,16 @@ impl TextEditor {
                         ui.output().cursor_icon = CursorIcon::Text;
                     }
                     if response.clicked() {
-                        let maybe_pos = ui.input().pointer.interact_pos();
-                        if maybe_pos.is_some() {
-                            let cursor_pos = maybe_pos.unwrap();
-                            self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
-                            self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
-                            self.reset_selection();
-                        }
+                        self.on_click(ui);
                         response.request_focus();
                     }
                     if response.drag_started() {
-                        let maybe_pos = ui.input().pointer.interact_pos();
-                        let cursor_pos = maybe_pos.unwrap();
-                        self.start_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
-                        self.stop_dragged_index = None;
+                        self.on_drag_start(ui);
                     }
                     if response.dragged() {
-                        let maybe_pos = ui.input().pointer.interact_pos();
-                        let cursor_pos = maybe_pos.unwrap();
-                        self.stop_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
-                        self.set_selection();
-                        self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
-                        self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
+                        self.on_drag(ui);
                     }
-                    let events = ui.input().events.clone();
-                    for event in &events {
-                        match event {
-                            Event::Key { key, pressed: true, modifiers } => self.on_key_press(*key, modifiers),
-                            Event::Text(text_to_insert) => {
-                                if self.has_selection() {
-                                    self.key_press_on_selection(Some(text_to_insert));
-                                } else {
-                                    self.split[self.cursor_index.y].insert_text(text_to_insert, self.cursor_index.x);
-                                }
-                                self.set_cursor_x(self.cursor_index.x + 1);
-                            }
-                            _ => {}
-                        }
-                    }
+                    self.handle_key_events(&ui.input().events);
                     ui.set_min_width(self.gutter_width + (self.char_width) * max_char_count as f32);
                     response
                 },
@@ -263,6 +235,49 @@ impl TextEditor {
         if output.state.offset.x != self.scroll_offset.x {
             self.scroll_offset.x = output.state.offset.x;
             self.set_cursor_x(self.cursor_index.x);
+        }
+    }
+
+    fn on_drag(&mut self, ui: &mut Ui) {
+        let maybe_pos = ui.input().pointer.interact_pos();
+        let cursor_pos = maybe_pos.unwrap();
+        self.stop_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
+        self.set_selection();
+        self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
+        self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
+    }
+
+    fn on_drag_start(&mut self, ui: &mut Ui) {
+        let maybe_pos = ui.input().pointer.interact_pos();
+        let cursor_pos = maybe_pos.unwrap();
+        self.start_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
+        self.stop_dragged_index = None;
+    }
+
+    fn on_click(&mut self, ui: &mut Ui) {
+        let maybe_pos = ui.input().pointer.interact_pos();
+        if maybe_pos.is_some() {
+            let cursor_pos = maybe_pos.unwrap();
+            self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
+            self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
+            self.reset_selection();
+        }
+    }
+
+    fn handle_key_events(&mut self, events: &Vec<Event>) {
+        for event in events {
+            match event {
+                Event::Key { key, pressed: true, modifiers } => self.on_key_press(*key, modifiers),
+                Event::Text(text_to_insert) => {
+                    if self.has_selection() {
+                        self.key_press_on_selection(Some(text_to_insert));
+                    } else {
+                        self.split[self.cursor_index.y].insert_text(text_to_insert, self.cursor_index.x);
+                    }
+                    self.set_cursor_x(self.cursor_index.x + 1);
+                }
+                _ => {}
+            }
         }
     }
 
