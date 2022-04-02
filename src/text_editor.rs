@@ -247,9 +247,9 @@ impl TextEditor {
                                 if self.has_selection() {
                                     self.key_press_on_selection(Some(text_to_insert));
                                 } else {
-                                    self.split[self.cursor_index.y].insert_str(self.cursor_index.x, text_to_insert);
+                                    self.split[self.cursor_index.y].insert_text(text_to_insert, self.cursor_index.x);
                                 }
-                                self.set_cursor_x(self.cursor_index.x + text_to_insert.len());
+                                self.set_cursor_x(self.cursor_index.x + 1);
                             }
                             _ => {}
                         }
@@ -356,10 +356,12 @@ impl TextEditor {
                 }
             }
             Key::Backspace => {
+                let line = &self.split[self.cursor_index.y];
+                let line_len = line.len();
                 if self.has_selection() {
                     self.key_press_on_selection(None);
-                } else if self.split[self.cursor_index.y].len() > 0 && self.cursor_index.x > 0 {
-                    self.split[self.cursor_index.y].remove(self.cursor_index.x - 1);
+                } else if line_len > 0 && self.cursor_index.x > 0 {
+                    self.split[self.cursor_index.y].delete_char_range(self.cursor_index.x - 1..self.cursor_index.x);
                     self.set_cursor_x(self.cursor_index.x - 1);
                 } else if self.cursor_index.x == 0 && self.cursor_index.y > 0 {
                     let previous_line_len = self.split[self.cursor_index.y - 1].len();
@@ -372,15 +374,18 @@ impl TextEditor {
                 }
             }
             Key::Delete => {
+                let line = &self.split[self.cursor_index.y];
+                let line_len = line.len();
+                let x_index = line.byte_index_from_char_index(self.cursor_index.x);
                 if self.has_selection() {
                     self.key_press_on_selection(None);
-                } else if self.split[self.cursor_index.y].len() > self.cursor_index.x {
-                    self.split[self.cursor_index.y].remove(self.cursor_index.x);
-                } else if self.split[self.cursor_index.y].len() == 0 {
+                } else if line_len > x_index {
+                    self.split[self.cursor_index.y].delete_char_range(self.cursor_index.x..self.cursor_index.x + 1);
+                } else if line_len == 0 {
                     self.split.remove(self.cursor_index.y);
                     self.set_cursor_y(self.cursor_index.y);
-                } else if self.split[self.cursor_index.y].len() == self.cursor_index.x && self.cursor_index.y + 1 < self.split.len() {
-                    let line = self.split.remove(self.cursor_index.y + 1);
+                } else if line_len == x_index && self.cursor_index.y + 1 < self.split.len() {
+                    let mut line = self.split.remove(self.cursor_index.y + 1);
                     if !line.is_empty() {
                         self.split[self.cursor_index.y].push_str(line.as_str());
                     }
@@ -391,13 +396,14 @@ impl TextEditor {
                     self.key_press_on_selection(None);
                 }
                 let line = &self.split[self.cursor_index.y].clone();
-                let line_start = &line[0..self.cursor_index.x];
-                let line_end = &line[self.cursor_index.x..line.len()];
+                let line_len = line.len();
+                let x_index = line.byte_index_from_char_index(self.cursor_index.x);
+                let line_start = &line[0..x_index];
+                let line_end = &line[x_index..line_len];
                 self.split[self.cursor_index.y] = line_start.to_string();
                 self.split.insert(self.cursor_index.y + 1, line_end.to_string());
                 self.set_cursor_y(self.cursor_index.y + 1);
                 self.set_cursor_x(0);
-
             }
             _ => {}
         }
@@ -442,7 +448,8 @@ impl TextEditor {
         if self.cursor_index.y >= self.lines_count {
             self.set_cursor_y(self.lines_count - 1);
         }
-        let line_len = self.split[self.cursor_index.y].len();
+        let line = &self.split[self.cursor_index.y];
+        let line_len = line.len();
         if self.cursor_index.x > line_len {
             self.set_cursor_x(line_len);
         }
@@ -858,21 +865,33 @@ impl Selection for TextEditor {
         let selection_end_index = self.selection_end_index.as_ref().unwrap().clone();
         if self.is_single_line_selection() {
             let line = &self.split[selection_start_index.y];
-            self.split[selection_start_index.y] = format!("{}{}{}", &line[0..selection_start_index.x],
+            let line_len = line.len();
+            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
+            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
+            self.split[selection_start_index.y] = format!("{}{}{}", &line[0..start_x_index],
                                                           text_to_insert.unwrap_or(""),
-                                                          &line[selection_end_index.x..line.len()]);
+                                                          &line[end_x_index..line_len]);
         } else if self.is_two_lines_selection() {
             let line = &self.split[selection_start_index.y];
-            let new_line_start = String::from(&line[0..selection_start_index.x]);
+            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
+            let new_line_start = String::from(&line[0..start_x_index]);
             self.split.remove(selection_start_index.y);
+
             let line = &self.split[selection_start_index.y];
-            let new_line_end = String::from(&line[selection_end_index.x..line.len()]);
+            let line_len = line.len();
+            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
+            let new_line_end = String::from(&line[end_x_index..line_len]);
             self.split[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
         } else {
             let line = &self.split[selection_start_index.y];
-            let new_line_start = String::from(&line[0..selection_start_index.x]);
+            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
+            let new_line_start = String::from(&line[0..start_x_index]);
+
             let line = &self.split[selection_end_index.y];
-            let new_line_end = String::from(&line[selection_end_index.x..line.len()]);
+            let line_len = line.len();
+            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
+            let new_line_end = String::from(&line[end_x_index..line_len]);
+
             let text_start = &self.split[0..selection_start_index.y];
             let text_end = &self.split[selection_end_index.y..self.split.len()];
             self.split = [text_start, text_end].concat();
