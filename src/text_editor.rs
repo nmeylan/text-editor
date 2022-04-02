@@ -34,13 +34,15 @@ pub struct TextEditor {
     gutter_width: f32,
     has_pressed_arrow_key: bool,
     text_editor_viewport: Rect,
-    // Position
+    // Cursor
     cursor_index: Pos<usize>,
     cursor_pos: Pos<f32>,
+    // Selection
     start_dragged_index: Option<Pos<usize>>,
     stop_dragged_index: Option<Pos<usize>>,
     selection_start_index: Option<Pos<usize>>,
     selection_end_index: Option<Pos<usize>>,
+    highlighted_word: Option<String>,
     // matching open-close characters
     opening_char: Option<char>,
     closing_char: Option<char>,
@@ -219,6 +221,9 @@ impl TextEditor {
                         self.on_click(ui);
                         response.request_focus();
                     }
+                    if response.double_clicked() {
+                        self.on_double_click(ui);
+                    }
                     if response.drag_started() {
                         self.on_drag_start(ui);
                     }
@@ -261,6 +266,35 @@ impl TextEditor {
             self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
             self.set_cursor_y(self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y));
             self.reset_selection();
+        }
+    }
+
+    fn on_double_click(&mut self, ui: &mut Ui) {
+        let maybe_pos = ui.input().pointer.interact_pos();
+        if maybe_pos.is_some() {
+            let cursor_pos = maybe_pos.unwrap();
+            let y_index = self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y);
+            let line = self.split[y_index].as_str();
+            let x_index = self.x_to_index(cursor_pos.x - (self.line_x_offset()));
+            let mut start_index = 0 as usize;
+            let mut end_index = 0 as usize;
+            for (i, c) in line.chars().enumerate() {
+                if !c.is_alphanumeric() && c != '_' && c!= '-' {
+                    if i >= x_index {
+                        end_index = i;
+                        break;
+                    } else {
+                        start_index = i + 1;
+                    }
+                }
+            }
+            if end_index == 0 {
+                end_index = line.len();
+            }
+            self.selection_start_index = Some(Pos {x: start_index, y: y_index});
+            self.selection_end_index = Some(Pos {x: end_index, y: y_index});
+            self.highlighted_word = Some((&line[start_index..end_index]).to_string());
+            self.set_cursor_x(end_index);
         }
     }
 
@@ -327,6 +361,7 @@ impl TextEditor {
             stop_dragged_index: Default::default(),
             selection_start_index: Default::default(),
             selection_end_index: Default::default(),
+            highlighted_word: None,
             opening_char: None,
             closing_char: None,
             opening_char_index: Default::default(),
@@ -764,6 +799,7 @@ impl Selection for TextEditor {
         self.selection_end_index = None;
         self.start_dragged_index = None;
         self.stop_dragged_index = None;
+        self.highlighted_word = None;
     }
     fn set_selection(&mut self) {
         let mut start_index = self.start_dragged_index.clone().unwrap();
