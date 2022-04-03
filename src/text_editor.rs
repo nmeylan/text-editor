@@ -43,12 +43,12 @@ pub struct TextEditor {
     selection_start_index: Option<Pos<usize>>,
     selection_end_index: Option<Pos<usize>>,
     highlighted_word: Option<String>,
-    word_occurrences: Vec<(Pos<usize>, Pos<usize>)>,
+    word_occurrences: RefCell<Vec<(Pos<usize>, Pos<usize>)>>,
     // matching open-close characters
-    opening_char: Option<char>,
-    closing_char: Option<char>,
-    opening_char_index: Option<Pos<usize>>,
-    closing_char_index: Option<Pos<usize>>,
+    opening_char: RefCell<Option<char>>,
+    closing_char: RefCell<Option<char>>,
+    opening_char_index: RefCell<Option<Pos<usize>>>,
+    closing_char_index: RefCell<Option<Pos<usize>>>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -114,92 +114,15 @@ impl TextEditor {
                     let mut text_line = vec![];
                     let mut max_char_count = 0;
                     let mut opening_char_occurrence = 0;
-                    self.word_occurrences = vec![];
-                    let should_find_opening = self.closing_char.is_some() && self.opening_char.is_none();
-                    if should_find_opening {
-                        for (relative_line_index, frag) in self.split[first_line_index..last_line_index + 1].iter().rev().enumerate() {
-                            let absolute_line_index = last_line_index - relative_line_index;
-                            if self.closing_char.is_some() && self.opening_char.is_none() {
-                                let closing_char_index = self.closing_char_index.as_ref().unwrap();
-                                if absolute_line_index <= closing_char_index.y {
-                                    for (i, c) in frag.chars().rev().enumerate() {
-                                        if closing_char_index.y == absolute_line_index && frag.len() - i > closing_char_index.x {
-                                            continue;
-                                        }
-                                        if c == self.closing_char.unwrap() {
-                                            opening_char_occurrence += 1;
-                                        } else if Self::matching_opening_char(self.closing_char.unwrap()) == c {
-                                            opening_char_occurrence -= 1;
-                                        }
-                                        if Self::matching_opening_char(self.closing_char.unwrap()) == c && opening_char_occurrence == 0 {
-                                            self.opening_char = Some(c);
-                                            self.opening_char_index = Some(Pos {
-                                                x: frag.len() - i - 1,
-                                                y: absolute_line_index,
-                                            });
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.word_occurrences = RefCell::new(vec![]);
+                    opening_char_occurrence = self.find_opening_matching_char(first_line_index, last_line_index, opening_char_occurrence);
+
+
                     for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().enumerate() {
                         let absolute_line_index = relative_line_index + first_line_index;
+                        self.highlight_word_occurrences(frag, absolute_line_index);
 
-                        let mut should_search_word = false;
-                        let mut word_char_search_index = 0;
-                        let mut start_index = 0;
-                        if self.highlighted_word.is_some() {
-                            let highlighted_word = self.highlighted_word.as_ref().unwrap();
-                            for (i, c) in frag.chars().enumerate() {
-                                if Self::is_char_non_part_of_word(c) {
-                                    if word_char_search_index == highlighted_word.len() {
-                                        self.word_occurrences.push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: i, y: absolute_line_index }));
-                                    }
-                                    should_search_word = true;
-                                    word_char_search_index = 0;
-                                    start_index = i;
-                                    continue;
-                                }
-                                if should_search_word {
-                                    let word_char = highlighted_word.chars().nth(word_char_search_index);
-                                    if word_char.is_some() && word_char.unwrap() == c {
-                                        word_char_search_index += 1;
-                                    } else {
-                                        word_char_search_index = 0;
-                                        should_search_word = false;
-                                    }
-                                }
-                            }
-                            if word_char_search_index == highlighted_word.len() {
-                                self.word_occurrences.push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: frag.chars().count(), y: absolute_line_index }));
-                            }
-                        }
-
-                        if self.opening_char.is_some() && self.closing_char.is_none() {
-                            let opening_char_index = self.opening_char_index.as_ref().unwrap();
-                            if absolute_line_index >= opening_char_index.y {
-                                for (i, c) in frag.chars().enumerate() {
-                                    if opening_char_index.y == absolute_line_index && i < opening_char_index.x {
-                                        continue;
-                                    }
-                                    if c == self.opening_char.unwrap() {
-                                        opening_char_occurrence += 1;
-                                    } else if Self::matching_closing_char(self.opening_char.unwrap()) == c {
-                                        opening_char_occurrence -= 1;
-                                    }
-                                    if Self::matching_closing_char(self.opening_char.unwrap()) == c && opening_char_occurrence == 0 {
-                                        self.closing_char = Some(c);
-                                        self.closing_char_index = Some(Pos {
-                                            x: i + 1,
-                                            y: absolute_line_index,
-                                        });
-                                        break;
-                                    }
-                                };
-                            }
-                        }
+                        opening_char_occurrence = self.find_closing_matching_char(opening_char_occurrence, frag, absolute_line_index);
                         if max_char_count < frag.len() {
                             max_char_count = frag.len();
                         }
@@ -275,6 +198,101 @@ impl TextEditor {
         if output.state.offset.x != self.scroll_offset.x {
             self.scroll_offset.x = output.state.offset.x;
             self.set_cursor_x(self.cursor_index.x);
+        }
+    }
+
+    fn find_closing_matching_char(&self, mut opening_char_occurrence: i32, frag: &String, absolute_line_index: usize) -> i32 {
+        if self.opening_char.borrow().is_some() && self.closing_char.borrow().is_none() {
+            let opening_char_index_ref = self.opening_char_index.borrow();
+            let opening_char = self.opening_char.borrow().unwrap();
+            let opening_char_index = opening_char_index_ref.as_ref().unwrap();
+            if absolute_line_index >= opening_char_index.y {
+                for (i, c) in frag.chars().enumerate() {
+                    if opening_char_index.y == absolute_line_index && i < opening_char_index.x {
+                        continue;
+                    };
+                    if c == opening_char {
+                        opening_char_occurrence += 1;
+                    } else if Self::matching_closing_char(opening_char) == c {
+                        opening_char_occurrence -= 1;
+                    }
+                    if Self::matching_closing_char(opening_char) == c && opening_char_occurrence == 0 {
+                        *self.closing_char.borrow_mut() = Some(c);
+                        *self.closing_char_index.borrow_mut() = Some(Pos {
+                            x: i + 1,
+                            y: absolute_line_index,
+                        });
+                        break;
+                    }
+                };
+            }
+        }
+        opening_char_occurrence
+    }
+
+    fn find_opening_matching_char(&mut self, first_line_index: usize, last_line_index: usize, mut opening_char_occurrence: i32) -> i32 {
+        let should_find_opening = self.closing_char.borrow().is_some() && self.opening_char.borrow().is_none();
+        if should_find_opening {
+            for (relative_line_index, frag) in self.split[first_line_index..last_line_index + 1].iter().rev().enumerate() {
+                let absolute_line_index = last_line_index - relative_line_index;
+                if self.closing_char.borrow().is_some() && self.opening_char.borrow().is_none() {
+                    let closing_char_index_ref = self.closing_char_index.borrow();
+                    let closing_char_index = closing_char_index_ref.as_ref().unwrap();
+                    if absolute_line_index <= closing_char_index.y {
+                        for (i, c) in frag.chars().rev().enumerate() {
+                            if closing_char_index.y == absolute_line_index && frag.len() - i > closing_char_index.x {
+                                continue;
+                            }
+                            if c == self.closing_char.borrow().unwrap() {
+                                opening_char_occurrence += 1;
+                            } else if Self::matching_opening_char(self.closing_char.borrow().unwrap()) == c {
+                                opening_char_occurrence -= 1;
+                            }
+                            if Self::matching_opening_char(self.closing_char.borrow().unwrap()) == c && opening_char_occurrence == 0 {
+                                *self.opening_char.borrow_mut() = Some(c);
+                                *self.opening_char_index.borrow_mut() = Some(Pos {
+                                    x: frag.len() - i - 1,
+                                    y: absolute_line_index,
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        opening_char_occurrence
+    }
+
+    fn highlight_word_occurrences(&self, frag: &String, absolute_line_index: usize) {
+        let mut should_search_word = false;
+        let mut word_char_search_index = 0;
+        let mut start_index = 0;
+        if self.highlighted_word.is_some() {
+            let highlighted_word = self.highlighted_word.as_ref().unwrap();
+            for (i, c) in frag.chars().enumerate() {
+                if Self::is_char_non_part_of_word(c) {
+                    if word_char_search_index == highlighted_word.len() {
+                        self.word_occurrences.borrow_mut().push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: i, y: absolute_line_index }));
+                    }
+                    should_search_word = true;
+                    word_char_search_index = 0;
+                    start_index = i;
+                    continue;
+                }
+                if should_search_word {
+                    let word_char = highlighted_word.chars().nth(word_char_search_index);
+                    if word_char.is_some() && word_char.unwrap() == c {
+                        word_char_search_index += 1;
+                    } else {
+                        word_char_search_index = 0;
+                        should_search_word = false;
+                    }
+                }
+            }
+            if word_char_search_index == highlighted_word.len() {
+                self.word_occurrences.borrow_mut().push((Pos { x: start_index + 1, y: absolute_line_index }, Pos { x: frag.chars().count(), y: absolute_line_index }));
+            }
         }
     }
 
@@ -403,11 +421,11 @@ impl TextEditor {
             selection_start_index: Default::default(),
             selection_end_index: Default::default(),
             highlighted_word: None,
-            word_occurrences: vec![],
-            opening_char: None,
-            closing_char: None,
-            opening_char_index: Default::default(),
-            closing_char_index: Default::default(),
+            word_occurrences: RefCell::new(vec![]),
+            opening_char: RefCell::new(None),
+            closing_char: RefCell::new(None),
+            opening_char_index: RefCell::new(None),
+            closing_char_index: RefCell::new(None),
         }
     }
 
@@ -523,10 +541,10 @@ impl TextEditor {
 
     fn after_cursor_position_change(&mut self) {
         if self.cursor_index.x == 0 {
-            self.opening_char_index = None;
-            self.opening_char = None;
-            self.closing_char = None;
-            self.closing_char_index = None;
+            *self.opening_char_index.borrow_mut() = None;
+            *self.opening_char.borrow_mut() = None;
+            *self.closing_char.borrow_mut() = None;
+            *self.closing_char_index.borrow_mut() = None;
             return;
         }
         let maybe_char = self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1);
@@ -534,25 +552,25 @@ impl TextEditor {
             if maybe_char.unwrap() == '{' || maybe_char.unwrap() == '(' || maybe_char.unwrap() == '[' {
                 let mut index = self.cursor_index.clone();
                 index.x = index.x - 1;
-                self.opening_char = maybe_char;
-                self.opening_char_index = Some(index);
-                self.closing_char = None;
-                self.closing_char_index = None;
+                *self.opening_char.borrow_mut() = maybe_char;
+                *self.opening_char_index.borrow_mut() = Some(index);
+                *self.closing_char.borrow_mut() = None;
+                *self.closing_char_index.borrow_mut() = None;
                 return;
             } else if maybe_char.unwrap() == '}' || maybe_char.unwrap() == ')' || maybe_char.unwrap() == ']' {
                 let mut index = self.cursor_index.clone();
                 index.x = index.x;
-                self.opening_char = None;
-                self.opening_char_index = None;
-                self.closing_char = maybe_char;
-                self.closing_char_index = Some(index);
+                *self.opening_char.borrow_mut() = None;
+                *self.opening_char_index.borrow_mut() = None;
+                *self.closing_char.borrow_mut() = maybe_char;
+                *self.closing_char_index.borrow_mut() = Some(index);
                 return;
             }
         }
-        self.opening_char = None;
-        self.opening_char_index = None;
-        self.closing_char = None;
-        self.closing_char_index = None;
+        *self.opening_char.borrow_mut() = None;
+        *self.opening_char_index.borrow_mut() = None;
+        *self.closing_char.borrow_mut() = None;
+        *self.closing_char_index.borrow_mut() = None;
     }
 
     #[inline]
@@ -684,7 +702,7 @@ impl TextEditor {
     }
 
     fn paint_word_occurrences(&self, first_line_index: usize, mut shapes: &mut Vec<Shape>) {
-        for (start_pos, end_pos) in self.word_occurrences.iter() {
+        for (start_pos, end_pos) in self.word_occurrences.borrow().iter() {
             shapes.push(epaint::Shape::Rect(RectShape {
                 rect: Rect {
                     min: Pos2 { x: self.index_to_x(start_pos.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(start_pos.y, first_line_index) },
@@ -698,8 +716,9 @@ impl TextEditor {
     }
 
     fn paint_matching_opening_closing_char(&self, first_line_index: usize, mut shapes: &mut Vec<Shape>) {
-        if self.opening_char_index.is_some() {
-            let opening_char_index = self.opening_char_index.as_ref().unwrap();
+        if self.opening_char_index.borrow().is_some() {
+            let opening_char_index_ref = self.opening_char_index.borrow();
+            let opening_char_index = opening_char_index_ref.as_ref().unwrap();
             if opening_char_index.y >= first_line_index {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
@@ -712,8 +731,9 @@ impl TextEditor {
                 }));
             }
         }
-        if self.closing_char_index.is_some() {
-            let closing_char_index = self.closing_char_index.as_ref().unwrap();
+        if self.closing_char_index.borrow().is_some() {
+            let closing_char_index_ref = self.closing_char_index.borrow();
+            let closing_char_index = closing_char_index_ref.as_ref().unwrap();
             if closing_char_index.y >= first_line_index && closing_char_index.x > 0 {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
@@ -858,6 +878,9 @@ impl Selection for TextEditor {
         self.highlighted_word = None;
     }
     fn set_selection(&mut self) {
+        if !self.start_dragged_index.is_some() || !self.stop_dragged_index.is_some() {
+            return;
+        }
         let mut start_index = self.start_dragged_index.clone().unwrap();
         let mut end_index = self.stop_dragged_index.clone().unwrap();
         if self.start_dragged_index.as_ref().unwrap().y > self.stop_dragged_index.as_ref().unwrap().y { // user can drag selection from bottom to top
