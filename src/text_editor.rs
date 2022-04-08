@@ -59,15 +59,17 @@ pub struct Pos<T> {
 
 impl TextEditor {
     pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        if self.split.len() == 0 {
+            self.split.push(String::default());
+        }
         self.lines_count = self.split.len();
 
         // We implement a virtual scroll, the viewport rect is static.
         let viewport = ui.max_rect();
         // Gutter display line numbers
-        self.gutter_width = (TextEditor::count_digit(self.lines_count) as f32 * (self.char_width / 2.0));
+        self.gutter_width = (TextEditor::count_digit(self.lines_count).max(1) as f32 * (self.char_width / 2.0));
         // Gutter
         let gutter_rect = Rect { min: Pos2 { x: viewport.min.x, y: viewport.min.y }, max: Pos2 { x: viewport.min.x + self.gutter_width, y: viewport.max.y } };
-
 
         // We declare a scroll area to have a scroll and use it scroll offset to display our data.
         let mut scroll_area = egui::ScrollArea::both();
@@ -100,6 +102,12 @@ impl TextEditor {
                 self.scroll_offset.x = self.scroll_offset.x + self.char_width;
                 scroll_area = scroll_area.horizontal_scroll_offset(self.scroll_offset.x);
             }
+        }
+        if self.scroll_offset.y > self.lines_count as f32 * self.line_height {
+            self.scroll_offset.y = self.lines_count as f32 * self.line_height;
+        }
+        if self.cursor_index.x == 0 && self.cursor_pos.x != self.text_editor_viewport.min.x {
+            self.cursor_pos.x = self.text_editor_viewport.min.x;
         }
         // Gutter
         self.gutter(ui, gutter_rect, first_line_index, last_line_index);
@@ -431,16 +439,19 @@ impl TextEditor {
 
     fn first_line_index(&self) -> usize {
         let mut first_line_index = (self.scroll_offset.y / self.line_height) as usize;
-        if first_line_index > self.split.len() - 1 {
+
+        if first_line_index > self.split.len() - 1 && self.split.len() > 1 {
             first_line_index = self.split.len() - 2;
+        } else if first_line_index > self.split.len() {
+            first_line_index = self.split.len() - 1;
         }
         first_line_index
     }
 
     fn last_line_Index(&self, max_lines: f32, first_line_index: usize) -> usize {
         let mut last_line_index = first_line_index as usize + max_lines as usize;
-        if last_line_index > self.split.len() - 1 {
-            last_line_index = self.split.len() - 1;
+        if last_line_index > self.split.len() {
+            last_line_index = self.split.len();
         }
         last_line_index
     }
@@ -525,6 +536,7 @@ impl TextEditor {
                 if self.has_selection() {
                     self.key_press_on_selection(None);
                 }
+                self.has_pressed_arrow_key = true;
                 let line = &self.split[self.cursor_index.y].clone();
                 let line_len = line.len();
                 let x_index = line.byte_index_from_char_index(self.cursor_index.x);
@@ -534,6 +546,15 @@ impl TextEditor {
                 self.split.insert(self.cursor_index.y + 1, line_end.to_string());
                 self.set_cursor_y(self.cursor_index.y + 1);
                 self.set_cursor_x(0);
+            }
+            Key::A => {
+                if modifiers.ctrl {
+                    let y_index = self.split.len() - 1;
+                    let last_line = &self.split[y_index];
+                    self.start_dragged_index = Some(Pos{ x: 0, y: 0});
+                    self.stop_dragged_index = Some(Pos{ x: last_line.chars().count(), y: y_index});
+                    self.set_selection();
+                }
             }
             _ => {}
         }
@@ -575,8 +596,8 @@ impl TextEditor {
 
     #[inline]
     fn sanitize_cursor_position(&mut self) {
-        if self.cursor_index.y >= self.lines_count {
-            self.set_cursor_y(self.lines_count - 1);
+        if self.cursor_index.y > self.lines_count {
+            self.set_cursor_y(self.lines_count);
         }
         let line = &self.split[self.cursor_index.y];
         let line_len = line.len();
@@ -826,9 +847,7 @@ impl TextEditor {
                 if *line_number == self.cursor_index.y {
                     color = [1.0, 0.0, 0.0, 1.0];
                 }
-                Text::default()
-                    .with_text(text.as_str())
-                    .with_color(color)
+                Text::default().with_text(text.as_str()).with_color(color)
                     .with_scale(self.scale)
             }).collect::<Vec<Text>>(),
             ..Section::default()
