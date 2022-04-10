@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::borrow::Borrow;
 use std::cell::{RefCell, RefMut};
+use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::format;
 use std::default::Default;
@@ -21,9 +22,10 @@ use eframe::egui::{*};
 use eframe::epaint::{*};
 use eframe::{egui, epi, epaint, emath};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
+use crate::text_editor::SingleAction::NewLine;
 
 pub struct TextEditor {
-    split: Vec<String>,
+    lines: Vec<String>,
     glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
     glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
     scroll_offset: Pos<f32>,
@@ -49,6 +51,64 @@ pub struct TextEditor {
     closing_char: RefCell<Option<char>>,
     opening_char_index: RefCell<Option<Pos<usize>>>,
     closing_char_index: RefCell<Option<Pos<usize>>>,
+    unsaved_stated: Option<UnsavedState>,
+    history: Vec<State>,
+    history_index: usize,
+}
+
+#[derive(Clone, Debug)]
+enum SingleAction {
+    AddChar(AddCharAction),
+    RemoveChar(RemoveCharAction),
+    RemoveLine(usize),
+    NewLine(Pos<usize>),
+}
+
+#[derive(Clone, Debug)]
+enum BulkAction {
+    AddText(TextAction),
+    RemoveText(TextAction),
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct TextAction {
+    start_index: usize,
+    end_index: usize,
+    lines: Vec<String>,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct AddCharAction {
+    start_pos: Pos<usize>,
+    char: String,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct RemoveCharAction {
+    start_pos: Pos<usize>,
+    char: char,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct DefaultAction {
+    start_pos: Pos<usize>,
+    line: String,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct UnsavedState {
+    created_at: f64,
+    cursor_index: Pos<usize>,
+    cursor_pos: Pos<f32>,
+    actions: Vec<SingleAction>,
+}
+
+#[derive(Clone, Debug)]
+pub struct State {
+    created_at: f64,
+    cursor_index: Pos<usize>,
+    cursor_pos: Pos<f32>,
+    bulk_action: BulkAction,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -58,11 +118,70 @@ pub struct Pos<T> {
 }
 
 impl TextEditor {
-    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        if self.split.len() == 0 {
-            self.split.push(String::default());
+    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+        let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
+            "Inconsolata-Regular.ttf"
+        )).unwrap();
+
+        let glyph_brush = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
+            .initial_cache_size((2048 * 2, 2048 * 2))
+            .draw_cache_position_tolerance(1.0)
+            .build(&creation_context.gl)));
+        let glyph_brush_line_number = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
+            .initial_cache_size((120, 120))
+            .draw_cache_position_tolerance(1.0)
+            .build(&creation_context.gl)));
+
+        let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
+        // let content = fs::read_to_string(Path::new("/home/nmeylan/documents/text-editor.test")).unwrap();
+        // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
+        let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
+        let lines_count = split.len();
+        let font_size = 15.0;
+        let scale = font_size * 2.0;
+
+        let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
+        let width = scale_font.h_advance(font.glyph_id('W'));
+        let height = scale_font.height();
+        let line_gap = scale_font.line_gap();
+        let char_width = width;
+        let line_height = font_size;
+        println!("char height: {}, width {}, gap: {}", height, width, line_gap);
+        Self {
+            lines: split,
+            glyph_brush_text_editor: glyph_brush,
+            glyph_brush_line_number,
+            scroll_offset: Default::default(),
+            lines_count,
+            char_width,
+            line_height,
+            scale,
+            gutter_width: 0.0,
+            has_pressed_arrow_key: false,
+            text_editor_viewport: Rect { min: Pos2::default(), max: Pos2::default() },
+            cursor_index: Default::default(),
+            cursor_pos: Default::default(),
+            start_dragged_index: Default::default(),
+            stop_dragged_index: Default::default(),
+            selection_start_index: Default::default(),
+            selection_end_index: Default::default(),
+            highlighted_word: None,
+            word_occurrences: RefCell::new(vec![]),
+            opening_char: RefCell::new(None),
+            closing_char: RefCell::new(None),
+            opening_char_index: RefCell::new(None),
+            closing_char_index: RefCell::new(None),
+            unsaved_stated: None,
+            history: vec![],
+            history_index: 0,
         }
-        self.lines_count = self.split.len();
+    }
+
+    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        if self.lines.len() == 0 {
+            self.lines.push(String::default());
+        }
+        self.lines_count = self.lines.len();
 
         // We implement a virtual scroll, the viewport rect is static.
         let viewport = ui.max_rect();
@@ -126,7 +245,7 @@ impl TextEditor {
                     opening_char_occurrence = self.find_opening_matching_char(first_line_index, last_line_index, opening_char_occurrence);
 
 
-                    for (relative_line_index, frag) in self.split[first_line_index..last_line_index].iter().enumerate() {
+                    for (relative_line_index, frag) in self.lines[first_line_index..last_line_index].iter().enumerate() {
                         let absolute_line_index = relative_line_index + first_line_index;
                         self.highlight_word_occurrences(frag, absolute_line_index);
 
@@ -196,7 +315,7 @@ impl TextEditor {
                     if response.dragged() {
                         self.on_drag(ui);
                     }
-                    self.handle_key_events(&ui.input().events);
+                    self.handle_key_events(&ui, &ui.input().events);
                     ui.set_min_width(self.gutter_width + (self.char_width) * max_char_count as f32);
                     response
                 },
@@ -241,7 +360,7 @@ impl TextEditor {
     fn find_opening_matching_char(&mut self, first_line_index: usize, last_line_index: usize, mut opening_char_occurrence: i32) -> i32 {
         let should_find_opening = self.closing_char.borrow().is_some() && self.opening_char.borrow().is_none();
         if should_find_opening {
-            for (relative_line_index, frag) in self.split[first_line_index..last_line_index + 1].iter().rev().enumerate() {
+            for (relative_line_index, frag) in self.lines[first_line_index..(last_line_index + 1).min(self.lines.len())].iter().rev().enumerate() {
                 let absolute_line_index = last_line_index - relative_line_index;
                 if self.closing_char.borrow().is_some() && self.opening_char.borrow().is_none() {
                     let closing_char_index_ref = self.closing_char_index.borrow();
@@ -335,7 +454,7 @@ impl TextEditor {
         if maybe_pos.is_some() {
             let cursor_pos = maybe_pos.unwrap();
             let y_index = self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y);
-            let line = self.split[y_index].as_str();
+            let line = self.lines[y_index].as_str();
             let x_index = self.x_to_index(cursor_pos.x - (self.line_x_offset()));
             let mut start_index = 0 as usize;
             let mut end_index = 0 as usize;
@@ -365,16 +484,18 @@ impl TextEditor {
         !c.is_alphanumeric() && c != '_' && c != '-'
     }
 
-    fn handle_key_events(&mut self, events: &Vec<Event>) {
+    fn handle_key_events(&mut self, ui: &Ui, events: &Vec<Event>) {
         for event in events {
             match event {
-                Event::Key { key, pressed: true, modifiers } => self.on_key_press(*key, modifiers),
+                Event::Key { key, pressed: true, modifiers } => self.on_key_press(ui, *key, modifiers),
                 Event::Text(text_to_insert) => {
                     if self.has_selection() {
                         self.key_press_on_selection(Some(text_to_insert));
                     } else {
-                        self.split[self.cursor_index.y].insert_text(text_to_insert, self.cursor_index.x);
+                        self.insert_text_at(text_to_insert, self.cursor_index.clone());
                     }
+                    self.push_action_to_unsaved_state(&ui, SingleAction::AddChar(AddCharAction { start_pos: self.cursor_index.clone(), char: text_to_insert.clone() }
+                    ));
                     self.set_cursor_x(self.cursor_index.x + 1);
                 }
                 _ => {}
@@ -382,81 +503,27 @@ impl TextEditor {
         }
     }
 
-    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
-        let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
-            "Inconsolata-Regular.ttf"
-        )).unwrap();
-
-        let glyph_brush = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
-            .initial_cache_size((2048 * 2, 2048 * 2))
-            .draw_cache_position_tolerance(1.0)
-            .build(&creation_context.gl)));
-        let glyph_brush_line_number = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
-            .initial_cache_size((120, 120))
-            .draw_cache_position_tolerance(1.0)
-            .build(&creation_context.gl)));
-
-        // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
-        let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
-        let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
-        let lines_count = split.len();
-        let font_size = 15.0;
-        let scale = font_size * 2.0;
-
-        let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
-        let width = scale_font.h_advance(font.glyph_id('W'));
-        let height = scale_font.height();
-        let line_gap = scale_font.line_gap();
-        let char_width = width;
-        let line_height = font_size;
-        println!("char height: {}, width {}, gap: {}", height, width, line_gap);
-        Self {
-            split,
-            glyph_brush_text_editor: glyph_brush,
-            glyph_brush_line_number,
-            scroll_offset: Default::default(),
-            lines_count,
-            char_width,
-            line_height,
-            scale,
-            gutter_width: 0.0,
-            has_pressed_arrow_key: false,
-            text_editor_viewport: Rect { min: Pos2::default(), max: Pos2::default() },
-            cursor_index: Default::default(),
-            cursor_pos: Default::default(),
-            start_dragged_index: Default::default(),
-            stop_dragged_index: Default::default(),
-            selection_start_index: Default::default(),
-            selection_end_index: Default::default(),
-            highlighted_word: None,
-            word_occurrences: RefCell::new(vec![]),
-            opening_char: RefCell::new(None),
-            closing_char: RefCell::new(None),
-            opening_char_index: RefCell::new(None),
-            closing_char_index: RefCell::new(None),
-        }
-    }
 
     fn first_line_index(&self) -> usize {
         let mut first_line_index = (self.scroll_offset.y / self.line_height) as usize;
 
-        if first_line_index > self.split.len() - 1 && self.split.len() > 1 {
-            first_line_index = self.split.len() - 2;
-        } else if first_line_index > self.split.len() {
-            first_line_index = self.split.len() - 1;
+        if first_line_index > self.lines.len() - 1 && self.lines.len() > 1 {
+            first_line_index = self.lines.len() - 2;
+        } else if first_line_index > self.lines.len() {
+            first_line_index = self.lines.len() - 1;
         }
         first_line_index
     }
 
     fn last_line_Index(&self, max_lines: f32, first_line_index: usize) -> usize {
         let mut last_line_index = first_line_index as usize + max_lines as usize;
-        if last_line_index > self.split.len() {
-            last_line_index = self.split.len();
+        if last_line_index > self.lines.len() {
+            last_line_index = self.lines.len();
         }
         last_line_index
     }
 
-    fn on_key_press(&mut self, key: Key, modifiers: &Modifiers) {
+    fn on_key_press(&mut self, ui: &Ui, key: Key, modifiers: &Modifiers) {
         match key {
             Key::ArrowDown | Key::ArrowUp => {
                 if modifiers.shift {
@@ -497,67 +564,123 @@ impl TextEditor {
                 }
             }
             Key::Backspace => {
-                let line = &self.split[self.cursor_index.y];
+                let line = &self.lines[self.cursor_index.y];
                 let line_len = line.len();
                 if self.has_selection() {
                     self.key_press_on_selection(None);
+                    return;
                 } else if line_len > 0 && self.cursor_index.x > 0 {
-                    self.split[self.cursor_index.y].delete_char_range(self.cursor_index.x - 1..self.cursor_index.x);
+                    self.push_action_to_unsaved_state(ui, SingleAction::RemoveChar(RemoveCharAction {
+                        start_pos: self.cursor_index.clone(),
+                        char: self.lines[self.cursor_index.y].chars().nth(self.cursor_index.x - 1).unwrap(),
+                    }));
                     self.set_cursor_x(self.cursor_index.x - 1);
+                    self.remove_char_at(self.cursor_index.clone());
                 } else if self.cursor_index.x == 0 && self.cursor_index.y > 0 {
-                    let previous_line_len = self.split[self.cursor_index.y - 1].len();
-                    let line = self.split.remove(self.cursor_index.y);
+                    self.push_action_to_unsaved_state(ui, SingleAction::RemoveLine(self.cursor_index.y));
+                    let previous_line_len = self.lines[self.cursor_index.y - 1].len();
+                    let line = self.lines.remove(self.cursor_index.y);
                     if !line.is_empty() {
-                        self.split[self.cursor_index.y - 1].push_str(line.as_str());
+                        self.lines[self.cursor_index.y - 1].push_str(line.as_str());
                     }
                     self.set_cursor_y(self.cursor_index.y - 1);
                     self.set_cursor_x(previous_line_len);
                 }
             }
             Key::Delete => {
-                let line = &self.split[self.cursor_index.y];
+                let line = &self.lines[self.cursor_index.y];
                 let line_len = line.len();
                 let x_index = line.byte_index_from_char_index(self.cursor_index.x);
                 if self.has_selection() {
                     self.key_press_on_selection(None);
+                    return;
                 } else if line_len > x_index {
-                    self.split[self.cursor_index.y].delete_char_range(self.cursor_index.x..self.cursor_index.x + 1);
-                } else if line_len == 0 {
-                    self.split.remove(self.cursor_index.y);
+                    self.push_action_to_unsaved_state(ui, SingleAction::RemoveChar(RemoveCharAction {
+                        start_pos: self.cursor_index.clone(),
+                        char: self.lines[self.cursor_index.y].chars().nth(self.cursor_index.x).unwrap(),
+                    }));
+                    self.remove_char_at(self.cursor_index.clone());
+                } else if line_len == 0 && self.cursor_index.y + 1 < self.lines.len() {
+                    self.push_action_to_unsaved_state(ui, SingleAction::RemoveLine(self.cursor_index.y));
+                    self.lines.remove(self.cursor_index.y);
                     self.set_cursor_y(self.cursor_index.y);
-                } else if line_len == x_index && self.cursor_index.y + 1 < self.split.len() {
-                    let mut line = self.split.remove(self.cursor_index.y + 1);
+                } else if line_len == x_index && self.cursor_index.y + 1 < self.lines.len() {
+                    self.push_action_to_unsaved_state(ui, SingleAction::RemoveLine(self.cursor_index.y + 1));
+                    let mut line = self.lines.remove(self.cursor_index.y + 1);
                     if !line.is_empty() {
-                        self.split[self.cursor_index.y].push_str(line.as_str());
+                        self.lines[self.cursor_index.y].push_str(line.as_str());
                     }
                 }
             }
             Key::Enter => {
                 if self.has_selection() {
                     self.key_press_on_selection(None);
+                    return;
                 }
                 self.has_pressed_arrow_key = true;
-                let line = &self.split[self.cursor_index.y].clone();
+                let line = &self.lines[self.cursor_index.y].clone();
                 let line_len = line.len();
                 let x_index = line.byte_index_from_char_index(self.cursor_index.x);
                 let line_start = &line[0..x_index];
                 let line_end = &line[x_index..line_len];
-                self.split[self.cursor_index.y] = line_start.to_string();
-                self.split.insert(self.cursor_index.y + 1, line_end.to_string());
+                self.lines[self.cursor_index.y] = line_start.to_string();
+                self.lines.insert(self.cursor_index.y + 1, line_end.to_string());
+                self.push_action_to_unsaved_state(ui, SingleAction::NewLine(self.cursor_index.clone()));
                 self.set_cursor_y(self.cursor_index.y + 1);
                 self.set_cursor_x(0);
             }
             Key::A => {
-                if modifiers.ctrl {
-                    let y_index = self.split.len() - 1;
-                    let last_line = &self.split[y_index];
-                    self.start_dragged_index = Some(Pos{ x: 0, y: 0});
-                    self.stop_dragged_index = Some(Pos{ x: last_line.chars().count(), y: y_index});
+                if modifiers.ctrl { // TODO check for mac
+                    let y_index = self.lines.len() - 1;
+                    let last_line = &self.lines[y_index];
+                    self.start_dragged_index = Some(Pos { x: 0, y: 0 });
+                    self.stop_dragged_index = Some(Pos { x: last_line.chars().count(), y: y_index });
                     self.set_selection();
+                }
+            }
+            Key::S => {
+                if modifiers.ctrl { // TODO check for mac
+                    println!("ctr + s");
+                    let maybe_state = self.flush_unsaved_state();
+                    if maybe_state.is_some() {
+                        self.history.push(maybe_state.unwrap());
+                    }
+                }
+            }
+            Key::Z => {
+                if modifiers.ctrl { // TODO check for mac
+                    println!("ctr + z");
+                    let maybe_state = self.history.pop();
+                    if maybe_state.is_some() {
+                        let state = maybe_state.unwrap();
+                        match state.bulk_action {
+                            BulkAction::AddText(action) => {
+                                self.lines.splice(action.start_index..self.lines.len().min(action.end_index + 1), action.lines);
+                            }
+                            BulkAction::RemoveText(action) => {
+                                let start = self.lines[0..action.start_index].to_vec();
+                                let mut end = vec![];
+                                if action.end_index + 1 <= self.lines.len() - 1 {
+                                    end = self.lines[action.end_index + 1..self.lines.len()].to_vec();
+                                }
+                                self.lines = [start, action.lines, end].concat();
+                            }
+                        }
+                        self.cursor_pos = state.cursor_pos;
+                        self.cursor_index = state.cursor_index;
+                    }
                 }
             }
             _ => {}
         }
+    }
+
+    fn remove_char_at(&mut self, pos: Pos<usize>) {
+        self.lines[pos.y].delete_char_range(pos.x..pos.x + 1)
+    }
+
+    fn insert_text_at(&mut self, text_to_insert: &String, pos: Pos<usize>) {
+        self.lines[pos.y].insert_text(text_to_insert, pos.x);
     }
 
     fn after_cursor_position_change(&mut self) {
@@ -568,7 +691,7 @@ impl TextEditor {
             *self.closing_char_index.borrow_mut() = None;
             return;
         }
-        let maybe_char = self.split[self.cursor_index.y].chars().nth(self.cursor_index.x - 1);
+        let maybe_char = self.lines[self.cursor_index.y].chars().nth(self.cursor_index.x - 1);
         if maybe_char.is_some() {
             if maybe_char.unwrap() == '{' || maybe_char.unwrap() == '(' || maybe_char.unwrap() == '[' {
                 let mut index = self.cursor_index.clone();
@@ -596,10 +719,10 @@ impl TextEditor {
 
     #[inline]
     fn sanitize_cursor_position(&mut self) {
-        if self.cursor_index.y > self.lines_count {
-            self.set_cursor_y(self.lines_count);
+        if self.cursor_index.y >= self.lines_count {
+            self.set_cursor_y(self.lines_count - 1);
         }
-        let line = &self.split[self.cursor_index.y];
+        let line = &self.lines[self.cursor_index.y];
         let line_len = line.len();
         if self.cursor_index.x > line_len {
             self.set_cursor_x(line_len);
@@ -628,7 +751,7 @@ impl TextEditor {
 
     #[inline]
     fn line_at(&self, y: f32) -> &str {
-        self.split[self.y_to_index(y)].as_str()
+        self.lines[self.y_to_index(y)].as_str()
     }
 
     #[inline]
@@ -917,11 +1040,11 @@ impl Selection for TextEditor {
         if end_index.y >= self.lines_count {
             end_index.y = self.lines_count - 1;
         }
-        let line_len = self.split[start_index.y].len();
+        let line_len = self.lines[start_index.y].len();
         if start_index.x > line_len {
             start_index.x = line_len;
         }
-        let line_len = self.split[end_index.y].len();
+        let line_len = self.lines[end_index.y].len();
         if end_index.x > line_len {
             end_index.x = line_len;
         }
@@ -1033,41 +1156,145 @@ impl Selection for TextEditor {
         let selection_start_index = self.selection_start_index.as_ref().unwrap().clone();
         let selection_end_index = self.selection_end_index.as_ref().unwrap().clone();
         if self.is_single_line_selection() {
-            let line = &self.split[selection_start_index.y];
+            let line = &self.lines[selection_start_index.y];
             let line_len = line.len();
             let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
             let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
-            self.split[selection_start_index.y] = format!("{}{}{}", &line[0..start_x_index],
+            self.lines[selection_start_index.y] = format!("{}{}{}", &line[0..start_x_index],
                                                           text_to_insert.unwrap_or(""),
                                                           &line[end_x_index..line_len]);
         } else if self.is_two_lines_selection() {
-            let line = &self.split[selection_start_index.y];
+            let line = &self.lines[selection_start_index.y];
             let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
             let new_line_start = String::from(&line[0..start_x_index]);
-            self.split.remove(selection_start_index.y);
+            self.lines.remove(selection_start_index.y);
 
-            let line = &self.split[selection_start_index.y];
+            let line = &self.lines[selection_start_index.y];
             let line_len = line.len();
             let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
             let new_line_end = String::from(&line[end_x_index..line_len]);
-            self.split[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
+            self.lines[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
         } else {
-            let line = &self.split[selection_start_index.y];
+            let line = &self.lines[selection_start_index.y];
             let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
             let new_line_start = String::from(&line[0..start_x_index]);
 
-            let line = &self.split[selection_end_index.y];
+            let line = &self.lines[selection_end_index.y];
             let line_len = line.len();
             let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
             let new_line_end = String::from(&line[end_x_index..line_len]);
 
-            let text_start = &self.split[0..selection_start_index.y];
-            let text_end = &self.split[selection_end_index.y..self.split.len()];
-            self.split = [text_start, text_end].concat();
-            self.split[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
+            let text_start = &self.lines[0..selection_start_index.y];
+            let text_end = &self.lines[selection_end_index.y..self.lines.len()];
+            self.lines = [text_start, text_end].concat();
+            self.lines[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
         }
         self.set_cursor_y(selection_start_index.y);
         self.set_cursor_x(selection_start_index.x);
         self.reset_selection();
+    }
+}
+
+trait HasUnsavedState {
+    fn init_unsaved_state(&mut self, time: f64);
+    fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction);
+    fn flush_unsaved_state(&mut self) -> Option<State>;
+}
+
+impl HasUnsavedState for TextEditor {
+    fn init_unsaved_state(&mut self, time: f64) {
+        self.unsaved_stated = Some(UnsavedState {
+            created_at: time,
+            cursor_index: self.cursor_index.clone(),
+            cursor_pos: self.cursor_pos.clone(),
+            actions: vec![],
+        })
+    }
+
+    fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction) {
+        if self.unsaved_stated.is_none() {
+            self.init_unsaved_state(ui.input().time);
+        }
+        self.unsaved_stated.as_mut().unwrap().actions.push(action);
+        println!("{:?}", self.unsaved_stated);
+    }
+
+    fn flush_unsaved_state(&mut self) -> Option<State> {
+        if self.unsaved_stated.is_none() {
+            return None;
+        }
+        let mut unsaved_state = self.unsaved_stated.as_ref().unwrap().clone();
+        self.unsaved_stated = None;
+        let mut min_index = self.lines.len();
+        let mut max_index = 0;
+        let mut y = 0;
+        let mut added_lines = 0;
+        for action in unsaved_state.actions.iter() {
+            match action {
+                SingleAction::AddChar(action) => y = action.start_pos.y,
+                SingleAction::RemoveChar(action) => y = action.start_pos.y,
+                SingleAction::RemoveLine(line_index) => y = line_index.clone(),
+                SingleAction::NewLine(position) => {
+                    y = position.y;
+                    added_lines += 1;
+                }
+            }
+            if min_index > y {
+                min_index = y;
+            }
+            if max_index < y {
+                max_index = y;
+            }
+        }
+        max_index += added_lines;
+
+        let mut lines = vec![String::default(); max_index - min_index + 1];
+        lines.splice(0..lines.len(), self.lines[min_index..=(self.lines.len() - 1).min(max_index)].to_vec()).collect::<Vec<String>>();
+        let before_lines_count = lines.len();
+        println!("{}..{} -> {}", min_index, max_index, before_lines_count);
+        println!("{:?}", lines);
+        loop {
+            if unsaved_state.actions.is_empty() {
+                break;
+            }
+            let action = unsaved_state.actions.pop().unwrap();
+            match action {
+                SingleAction::AddChar(action) => {
+                    lines[action.start_pos.y - min_index].delete_char_range(action.start_pos.x..action.start_pos.x + 1);
+                }
+                SingleAction::RemoveChar(action) => {
+                    lines[action.start_pos.y - min_index].insert((action.start_pos.x.max(1)) - 1, action.char);
+                }
+                SingleAction::RemoveLine(line_index) => {
+                    lines.insert(line_index - min_index, String::default());
+                }
+                SingleAction::NewLine(position) => {
+                    let y = position.y - min_index;
+                    let start_line = lines[y].clone();
+                    let end_line = lines[y + 1].clone();
+                    lines[y] = format!("{}{}", start_line, end_line);
+                    lines.remove(y + 1);
+                }
+            }
+        }
+        let after_lines_count = lines.len();
+        println!("before {} after {}", before_lines_count, after_lines_count);
+        println!("{:?}", lines);
+        let text_action = TextAction {
+            start_index: min_index,
+            end_index: max_index,
+            lines,
+        };
+
+        Some(State {
+            created_at: unsaved_state.created_at,
+            cursor_index: unsaved_state.cursor_index,
+            cursor_pos: unsaved_state.cursor_pos,
+            bulk_action: if before_lines_count <= after_lines_count {
+                BulkAction::AddText(text_action)
+            } else {
+                BulkAction::RemoveText(text_action)
+            }
+        })
     }
 }
