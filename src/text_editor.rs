@@ -54,6 +54,7 @@ pub struct TextEditor {
     unsaved_stated: Option<UnsavedState>,
     history: Vec<State>,
     history_index: usize,
+    latest_change_time: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +98,7 @@ pub struct DefaultAction {
 
 #[derive(Default, Clone, Debug)]
 pub struct UnsavedState {
-    created_at: f64,
+    last_activity_at: f64,
     cursor_index: Pos<usize>,
     cursor_pos: Pos<f32>,
     actions: Vec<SingleAction>,
@@ -132,8 +133,8 @@ impl TextEditor {
             .draw_cache_position_tolerance(1.0)
             .build(&creation_context.gl)));
 
-        let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
-        // let content = fs::read_to_string(Path::new("/home/nmeylan/documents/text-editor.test")).unwrap();
+        // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
+        let content = fs::read_to_string(Path::new("/home/nmeylan/documents/text-editor.test")).unwrap();
         // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
@@ -174,6 +175,7 @@ impl TextEditor {
             unsaved_stated: None,
             history: vec![],
             history_index: 0,
+            latest_change_time: 0.0,
         }
     }
 
@@ -326,6 +328,8 @@ impl TextEditor {
             self.scroll_offset.x = output.state.offset.x;
             self.set_cursor_x(self.cursor_index.x);
         }
+
+        self.feed_history(ui);
     }
 
     fn find_closing_matching_char(&self, mut opening_char_occurrence: i32, frag: &String, absolute_line_index: usize) -> i32 {
@@ -641,10 +645,6 @@ impl TextEditor {
             Key::S => {
                 if modifiers.ctrl { // TODO check for mac
                     println!("ctr + s");
-                    let maybe_state = self.flush_unsaved_state();
-                    if maybe_state.is_some() {
-                        self.history.push(maybe_state.unwrap());
-                    }
                 }
             }
             Key::Z => {
@@ -672,6 +672,13 @@ impl TextEditor {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn feed_history(&mut self, ui: &Ui) {
+        let maybe_state = self.flush_unsaved_state(ui.input().time);
+        if maybe_state.is_some() {
+            self.history.push(maybe_state.unwrap());
         }
     }
 
@@ -1198,13 +1205,15 @@ impl Selection for TextEditor {
 trait HasUnsavedState {
     fn init_unsaved_state(&mut self, time: f64);
     fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction);
-    fn flush_unsaved_state(&mut self) -> Option<State>;
+    fn flush_unsaved_state(&mut self, time: f64) -> Option<State>;
 }
+
+const InactivityPeriod: f64 = 2.0;
 
 impl HasUnsavedState for TextEditor {
     fn init_unsaved_state(&mut self, time: f64) {
         self.unsaved_stated = Some(UnsavedState {
-            created_at: time,
+            last_activity_at: time,
             cursor_index: self.cursor_index.clone(),
             cursor_pos: self.cursor_pos.clone(),
             actions: vec![],
@@ -1215,15 +1224,24 @@ impl HasUnsavedState for TextEditor {
         if self.unsaved_stated.is_none() {
             self.init_unsaved_state(ui.input().time);
         }
-        self.unsaved_stated.as_mut().unwrap().actions.push(action);
-        println!("{:?}", self.unsaved_stated);
+        let unsaved_state = self.unsaved_stated.as_mut().unwrap();
+        unsaved_state.actions.push(action);
+        if ui.input().time - unsaved_state.last_activity_at >= InactivityPeriod {
+            self.feed_history(ui);
+        } else {
+            unsaved_state.last_activity_at = ui.input().time;
+        }
     }
 
-    fn flush_unsaved_state(&mut self) -> Option<State> {
+    fn flush_unsaved_state(&mut self, time: f64) -> Option<State> {
         if self.unsaved_stated.is_none() {
             return None;
         }
         let mut unsaved_state = self.unsaved_stated.as_ref().unwrap().clone();
+        if time - unsaved_state.last_activity_at < InactivityPeriod {
+            return None;
+        }
+        println!("Saving state");
         self.unsaved_stated = None;
         let mut min_index = self.lines.len();
         let mut max_index = 0;
@@ -1251,8 +1269,6 @@ impl HasUnsavedState for TextEditor {
         let mut lines = vec![String::default(); max_index - min_index + 1];
         lines.splice(0..lines.len(), self.lines[min_index..=(self.lines.len() - 1).min(max_index)].to_vec()).collect::<Vec<String>>();
         let before_lines_count = lines.len();
-        println!("{}..{} -> {}", min_index, max_index, before_lines_count);
-        println!("{:?}", lines);
         loop {
             if unsaved_state.actions.is_empty() {
                 break;
@@ -1278,8 +1294,6 @@ impl HasUnsavedState for TextEditor {
             }
         }
         let after_lines_count = lines.len();
-        println!("before {} after {}", before_lines_count, after_lines_count);
-        println!("{:?}", lines);
         let text_action = TextAction {
             start_index: min_index,
             end_index: max_index,
@@ -1287,14 +1301,14 @@ impl HasUnsavedState for TextEditor {
         };
 
         Some(State {
-            created_at: unsaved_state.created_at,
+            created_at: unsaved_state.last_activity_at,
             cursor_index: unsaved_state.cursor_index,
             cursor_pos: unsaved_state.cursor_pos,
             bulk_action: if before_lines_count <= after_lines_count {
                 BulkAction::AddText(text_action)
             } else {
                 BulkAction::RemoveText(text_action)
-            }
+            },
         })
     }
 }
