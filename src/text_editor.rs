@@ -16,10 +16,9 @@ use eframe::emath::Vec2;
 use eframe::egui::epaint::TextShape;
 use eframe::egui::{Color32, Context, FontId, Galley, Pos2, Sense, TextFormat};
 use eframe::egui::text::LayoutJob;
-use eframe::epi::{App, Frame, Storage};
 use eframe::egui::{*};
 use eframe::epaint::{*};
-use eframe::{egui, epi, epaint, emath, CreationContext};
+use eframe::{egui, epaint, emath, CreationContext};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
 use crate::text_editor::SingleAction::NewLine;
 
@@ -116,7 +115,7 @@ pub struct Pos<T> {
     pub x: T,
     pub y: T,
 }
-
+const scale_factor: f32 = 1.5;
 impl TextEditor {
     pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str) -> Self {
         let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
@@ -126,11 +125,11 @@ impl TextEditor {
         let glyph_brush = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
             .initial_cache_size((2048 * 2, 2048 * 2))
             .draw_cache_position_tolerance(1.0)
-            .build(&creation_context.gl)));
+            .build(creation_context.gl.as_ref().unwrap())));
         let glyph_brush_line_number = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
             .initial_cache_size((120, 120))
             .draw_cache_position_tolerance(1.0)
-            .build(&creation_context.gl)));
+            .build(creation_context.gl.as_ref().unwrap())));
 
         // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
         let content = fs::read_to_string(Path::new(file_path)).unwrap();
@@ -138,7 +137,7 @@ impl TextEditor {
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
         let font_size = 15.0;
-        let scale = font_size * 2.0;
+        let scale = font_size * scale_factor;
 
         let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
         let width = scale_font.h_advance(font.glyph_id('W'));
@@ -187,7 +186,7 @@ impl TextEditor {
         // We implement a virtual scroll, the viewport rect is static.
         let viewport = ui.max_rect();
         // Gutter display line numbers
-        self.gutter_width = (TextEditor::count_digit(self.lines_count).max(1) as f32 * (self.char_width / 2.0));
+        self.gutter_width = (TextEditor::count_digit(self.lines_count).max(1) as f32 * (self.char_width / scale_factor));
         // Gutter
         let gutter_rect = Rect { min: Pos2 { x: viewport.min.x, y: viewport.min.y }, max: Pos2 { x: viewport.min.x + self.gutter_width, y: viewport.max.y } };
 
@@ -218,7 +217,7 @@ impl TextEditor {
             if self.cursor_pos.x - self.text_editor_viewport.min.x < 0.0 {
                 self.scroll_offset.x = self.scroll_offset.x + self.cursor_pos.x - self.text_editor_viewport.min.x - self.char_width;
                 scroll_area = scroll_area.horizontal_scroll_offset(self.scroll_offset.x);
-            } else if self.cursor_pos.x + self.scroll_offset.x > text_editor_viewport_width + self.text_editor_viewport.min.x + self.scroll_offset.x - 2.0 * self.char_width {
+            } else if self.cursor_pos.x + self.scroll_offset.x > text_editor_viewport_width + self.text_editor_viewport.min.x + self.scroll_offset.x - scale_factor * self.char_width {
                 self.scroll_offset.x = self.scroll_offset.x + self.char_width;
                 scroll_area = scroll_area.horizontal_scroll_offset(self.scroll_offset.x);
             }
@@ -286,22 +285,18 @@ impl TextEditor {
                     let mut glyph_brush = self.glyph_brush_text_editor.clone();
                     ui.painter().add(egui::epaint::PaintCallback {
                         rect: self.text_editor_viewport,
-                        callback: std::sync::Arc::new(move |render_ctx| {
-                            if let Some(painter) = render_ctx.downcast_ref::<egui_glow::Painter>() {
-                                let mut brush_mut = glyph_brush.lock().unwrap();
-                                brush_mut.draw_queued(&painter.gl(),
-                                                      (text_editor_viewport_width) as u32, (text_editor_viewport_height) as u32)
-                                    .expect("Draw queued");
-                            } else {
-                                eprintln!("Can't do custom painting because we are not using a glow context");
-                            }
-                        }),
+                        callback:  std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
+                            let mut brush_mut = glyph_brush.lock().unwrap();
+                            brush_mut.draw_queued(&painter.gl(),
+                                                  (text_editor_viewport_width) as u32, (text_editor_viewport_height) as u32)
+                                .expect("Draw queued");
+                        })),
                     });
 
                     let response = ui.interact(self.text_editor_viewport, id, Sense::click_and_drag());
-                    ui.memory().request_focus(id);
+                    ui.memory_mut(|mem| mem.request_focus(id));
                     if response.hovered() {
-                        ui.output().cursor_icon = CursorIcon::Text;
+                        ui.output_mut(|mem| mem.cursor_icon = CursorIcon::Text);
                     }
                     if response.clicked() {
                         self.on_click(ui);
@@ -316,7 +311,7 @@ impl TextEditor {
                     if response.dragged() {
                         self.on_drag(ui);
                     }
-                    self.handle_key_events(&ui, &ui.input().events);
+                    self.handle_key_events(&ui, &ui.input(|input| input.events.clone()).as_ref());
                     ui.set_min_width(self.gutter_width + (self.char_width) * max_char_count as f32);
                     response
                 },
@@ -427,7 +422,7 @@ impl TextEditor {
     }
 
     fn on_drag(&mut self, ui: &mut Ui) {
-        let maybe_pos = ui.input().pointer.interact_pos();
+        let maybe_pos = ui.input(|input| input.pointer.interact_pos());
         let cursor_pos = maybe_pos.unwrap();
         self.stop_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
         self.set_selection();
@@ -436,14 +431,14 @@ impl TextEditor {
     }
 
     fn on_drag_start(&mut self, ui: &mut Ui) {
-        let maybe_pos = ui.input().pointer.interact_pos();
+        let maybe_pos = ui.input(|input| input.pointer.interact_pos());
         let cursor_pos = maybe_pos.unwrap();
         self.start_dragged_index = Some(Pos::<usize> { x: self.x_to_index(cursor_pos.x - self.line_x_offset()), y: self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y) });
         self.stop_dragged_index = None;
     }
 
     fn on_click(&mut self, ui: &mut Ui) {
-        let maybe_pos = ui.input().pointer.interact_pos();
+        let maybe_pos = ui.input(|input| input.pointer.interact_pos());
         if maybe_pos.is_some() {
             let cursor_pos = maybe_pos.unwrap();
             self.set_cursor_x(self.x_to_index(cursor_pos.x - (self.line_x_offset())));
@@ -453,7 +448,7 @@ impl TextEditor {
     }
 
     fn on_double_click(&mut self, ui: &mut Ui) {
-        let maybe_pos = ui.input().pointer.interact_pos();
+        let maybe_pos = ui.input(|input| input.pointer.interact_pos());
         if maybe_pos.is_some() {
             let cursor_pos = maybe_pos.unwrap();
             let y_index = self.y_to_index(cursor_pos.y - self.text_editor_viewport.min.y);
@@ -490,7 +485,7 @@ impl TextEditor {
     fn handle_key_events(&mut self, ui: &Ui, events: &Vec<Event>) {
         for event in events {
             match event {
-                Event::Key { key, pressed: true, modifiers } => self.on_key_press(ui, *key, modifiers),
+                Event::Key { key, pressed: true, modifiers, .. } => self.on_key_press(ui, *key, modifiers),
                 Event::Text(text_to_insert) => {
                     if self.has_selection() {
                         self.key_press_on_selection(Some(text_to_insert));
@@ -675,7 +670,7 @@ impl TextEditor {
     }
 
     fn feed_history(&mut self, ui: &Ui) {
-        let maybe_state = self.flush_unsaved_state(ui.input().time);
+        let maybe_state = self.flush_unsaved_state(ui.input(|input| input.time));
         if maybe_state.is_some() {
             self.history.push(maybe_state.unwrap());
         }
@@ -752,7 +747,7 @@ impl TextEditor {
 
     #[inline]
     fn x_to_index(&self, x: f32) -> usize {
-        ((x) / (self.char_width / 2.0)) as usize
+        ((x) / (self.char_width / scale_factor)) as usize
     }
 
     #[inline]
@@ -781,7 +776,7 @@ impl TextEditor {
 
     #[inline]
     fn index_to_x(&self, index: usize) -> f32 {
-        index as f32 * (self.char_width / 2.0) + (self.line_x_offset())
+        index as f32 * (self.char_width / scale_factor) + (self.line_x_offset())
     }
 
     #[inline]
@@ -808,7 +803,7 @@ impl TextEditor {
 
     #[inline]
     fn line_x_offset(&self) -> f32 {
-        self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
+        self.text_editor_viewport.min.x - self.scroll_offset.x / scale_factor
     }
 
     fn matching_closing_char(opening: char) -> char {
@@ -873,7 +868,7 @@ impl TextEditor {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
+                        max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / scale_factor, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::GREEN,
@@ -888,7 +883,7 @@ impl TextEditor {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
+                        max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / scale_factor, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::GREEN,
@@ -919,8 +914,8 @@ impl TextEditor {
             for j in 0..frag.len() {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: emath::Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x + j as f32 * self.char_width / 2.0, y: top + (self.line_height) * (i) as f32 },
-                        max: Pos2 { x: self.text_editor_viewport.min.x + (j + 1) as f32 * self.char_width / 2.0, y: top + (self.line_height) * (i + 1) as f32 },
+                        min: Pos2 { x: self.text_editor_viewport.min.x + j as f32 * self.char_width / scale_factor, y: top + (self.line_height) * (i) as f32 },
+                        max: Pos2 { x: self.text_editor_viewport.min.x + (j + 1) as f32 * self.char_width / scale_factor, y: top + (self.line_height) * (i + 1) as f32 },
                     }
                     ,
                     fill: if j % 2 == 0 {
@@ -992,16 +987,12 @@ impl TextEditor {
             let glyph_brush = self.glyph_brush_line_number.clone();
             ui.painter().add(egui::epaint::PaintCallback {
                 rect: gutter_rect,
-                callback: std::sync::Arc::new(move |render_ctx| {
-                    if let Some(painter) = render_ctx.downcast_ref::<egui_glow::Painter>() {
-                        let mut brush_mut = glyph_brush.lock().unwrap();
-                        brush_mut.draw_queued(&painter.gl(),
-                                              (gutter_rect.max.x - gutter_rect.min.x) as u32, (gutter_rect.max.y - gutter_rect.min.y) as u32)
-                            .expect("Draw queued");
-                    } else {
-                        eprintln!("Can't do custom painting because we are not using a glow context");
-                    }
-                }),
+                callback: std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
+                    let mut brush_mut = glyph_brush.lock().unwrap();
+                    brush_mut.draw_queued(&painter.gl(),
+                                          (gutter_rect.max.x - gutter_rect.min.x) as u32, (gutter_rect.max.y - gutter_rect.min.y) as u32)
+                        .expect("Draw queued");
+                })),
             });
         });
     }
@@ -1221,14 +1212,14 @@ impl HasUnsavedState for TextEditor {
 
     fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction) {
         if self.unsaved_stated.is_none() {
-            self.init_unsaved_state(ui.input().time);
+            self.init_unsaved_state(ui.input(|input| input.time));
         }
         let unsaved_state = self.unsaved_stated.as_mut().unwrap();
         unsaved_state.actions.push(action);
-        if ui.input().time - unsaved_state.last_activity_at >= InactivityPeriod {
+        if ui.input(|input| input.time) - unsaved_state.last_activity_at >= InactivityPeriod {
             self.feed_history(ui);
         } else {
-            unsaved_state.last_activity_at = ui.input().time;
+            unsaved_state.last_activity_at = ui.input(|input| input.time);
         }
     }
 
