@@ -115,7 +115,7 @@ pub struct Pos<T> {
     pub x: T,
     pub y: T,
 }
-const scale_factor: f32 = 1.5;
+// const scale_factor: f32 = 1.5;
 impl TextEditor {
     pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str) -> Self {
         let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
@@ -137,6 +137,7 @@ impl TextEditor {
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
         let font_size = 12.0;
+        let scale_factor = creation_context.integration_info.native_pixels_per_point.unwrap();
         let scale = font_size * scale_factor;
 
         let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
@@ -145,7 +146,7 @@ impl TextEditor {
         let line_gap = scale_font.line_gap();
         let char_width = width;
         let line_height = height;
-        println!("char height: {}, width {}, gap: {}", height, width, line_gap);
+        println!("char height: {}, width {}, gap: {}, scale_factor: {}", height, width, line_gap, scale_factor);
         Self {
             lines: split,
             glyph_brush_text_editor: glyph_brush,
@@ -249,7 +250,8 @@ impl TextEditor {
                         let absolute_line_index = relative_line_index + first_line_index;
                         self.highlight_word_occurrences(frag, absolute_line_index);
 
-                        self.paint_debug_char(self.text_editor_viewport.min.y, &mut shapes, relative_line_index, absolute_line_index, frag);
+                        // self.paint_debug_char(self.text_editor_viewport.min.y, &mut shapes, relative_line_index, absolute_line_index, frag);
+
                         opening_char_occurrence = self.find_closing_matching_char(opening_char_occurrence, frag, absolute_line_index);
                         if max_char_count < frag.len() {
                             max_char_count = frag.len();
