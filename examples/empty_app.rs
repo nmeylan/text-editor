@@ -1,4 +1,4 @@
-use eframe::{egui, epi};
+use eframe::{egui};
 
 fn main() {
     let options = eframe::NativeOptions::default();
@@ -10,8 +10,8 @@ fn main() {
 #[derive(Default)]
 struct MyApp{}
 
-impl eframe::epi::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.label("top panel");
         });
