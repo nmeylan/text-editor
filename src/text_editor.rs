@@ -136,7 +136,7 @@ impl TextEditor {
         // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
-        let font_size = 15.0;
+        let font_size = 12.0;
         let scale = font_size * scale_factor;
 
         let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
@@ -144,7 +144,7 @@ impl TextEditor {
         let height = scale_font.height();
         let line_gap = scale_font.line_gap();
         let char_width = width;
-        let line_height = font_size;
+        let line_height = height;
         println!("char height: {}, width {}, gap: {}", height, width, line_gap);
         Self {
             lines: split,
@@ -186,7 +186,7 @@ impl TextEditor {
         // We implement a virtual scroll, the viewport rect is static.
         let viewport = ui.max_rect();
         // Gutter display line numbers
-        self.gutter_width = (TextEditor::count_digit(self.lines_count).max(1) as f32 * (self.char_width / scale_factor));
+        self.gutter_width = (TextEditor::count_digit(self.lines_count).max(1) as f32 * self.char_width);
         // Gutter
         let gutter_rect = Rect { min: Pos2 { x: viewport.min.x, y: viewport.min.y }, max: Pos2 { x: viewport.min.x + self.gutter_width, y: viewport.max.y } };
 
@@ -217,7 +217,7 @@ impl TextEditor {
             if self.cursor_pos.x - self.text_editor_viewport.min.x < 0.0 {
                 self.scroll_offset.x = self.scroll_offset.x + self.cursor_pos.x - self.text_editor_viewport.min.x - self.char_width;
                 scroll_area = scroll_area.horizontal_scroll_offset(self.scroll_offset.x);
-            } else if self.cursor_pos.x + self.scroll_offset.x > text_editor_viewport_width + self.text_editor_viewport.min.x + self.scroll_offset.x - scale_factor * self.char_width {
+            } else if self.cursor_pos.x + self.scroll_offset.x > text_editor_viewport_width + self.text_editor_viewport.min.x + self.scroll_offset.x - (2.0 * self.char_width) {
                 self.scroll_offset.x = self.scroll_offset.x + self.char_width;
                 scroll_area = scroll_area.horizontal_scroll_offset(self.scroll_offset.x);
             }
@@ -249,6 +249,7 @@ impl TextEditor {
                         let absolute_line_index = relative_line_index + first_line_index;
                         self.highlight_word_occurrences(frag, absolute_line_index);
 
+                        self.paint_debug_char(self.text_editor_viewport.min.y, &mut shapes, relative_line_index, absolute_line_index, frag);
                         opening_char_occurrence = self.find_closing_matching_char(opening_char_occurrence, frag, absolute_line_index);
                         if max_char_count < frag.len() {
                             max_char_count = frag.len();
@@ -747,7 +748,7 @@ impl TextEditor {
 
     #[inline]
     fn x_to_index(&self, x: f32) -> usize {
-        ((x) / (self.char_width / scale_factor)) as usize
+        ((x) / self.char_width) as usize
     }
 
     #[inline]
@@ -776,7 +777,7 @@ impl TextEditor {
 
     #[inline]
     fn index_to_x(&self, index: usize) -> f32 {
-        index as f32 * (self.char_width / scale_factor) + (self.line_x_offset())
+        index as f32 * self.char_width + (self.line_x_offset())
     }
 
     #[inline]
@@ -803,7 +804,7 @@ impl TextEditor {
 
     #[inline]
     fn line_x_offset(&self) -> f32 {
-        self.text_editor_viewport.min.x - self.scroll_offset.x / scale_factor
+        self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
     }
 
     fn matching_closing_char(opening: char) -> char {
@@ -868,7 +869,7 @@ impl TextEditor {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width / scale_factor, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
+                        max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::GREEN,
@@ -883,7 +884,7 @@ impl TextEditor {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width / scale_factor, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
+                        max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
                     },
                     rounding: Rounding::none(),
                     fill: Color32::GREEN,
@@ -910,12 +911,12 @@ impl TextEditor {
     }
 
     fn paint_debug_char(&self, top: f32, mut shapes: &mut Vec<Shape>, i: usize, line_number: usize, frag: &String) {
-        if line_number - 1 == self.cursor_index.y {
+        if line_number == self.cursor_index.y {
             for j in 0..frag.len() {
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: emath::Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x + j as f32 * self.char_width / scale_factor, y: top + (self.line_height) * (i) as f32 },
-                        max: Pos2 { x: self.text_editor_viewport.min.x + (j + 1) as f32 * self.char_width / scale_factor, y: top + (self.line_height) * (i + 1) as f32 },
+                        min: Pos2 { x: self.text_editor_viewport.min.x + j as f32 * self.char_width, y: top + (self.line_height) * (i) as f32 },
+                        max: Pos2 { x: self.text_editor_viewport.min.x + (j + 1) as f32 * self.char_width, y: top + (self.line_height) * (i + 1) as f32 },
                     }
                     ,
                     fill: if j % 2 == 0 {
