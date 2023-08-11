@@ -5,7 +5,6 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::format;
 use std::default::Default;
-use std::detect::__is_feature_detected::sha;
 use std::fs;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -20,7 +19,7 @@ use eframe::egui::text::LayoutJob;
 use eframe::epi::{App, Frame, Storage};
 use eframe::egui::{*};
 use eframe::epaint::{*};
-use eframe::{egui, epi, epaint, emath};
+use eframe::{egui, epi, epaint, emath, CreationContext};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
 use crate::text_editor::SingleAction::NewLine;
 
@@ -119,7 +118,7 @@ pub struct Pos<T> {
 }
 
 impl TextEditor {
-    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str) -> Self {
         let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
             "Inconsolata-Regular.ttf"
         )).unwrap();
@@ -134,7 +133,7 @@ impl TextEditor {
             .build(&creation_context.gl)));
 
         // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
-        let content = fs::read_to_string(Path::new("/home/nmeylan/documents/text-editor.test")).unwrap();
+        let content = fs::read_to_string(Path::new(file_path)).unwrap();
         // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();

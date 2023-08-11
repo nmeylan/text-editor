@@ -5,6 +5,7 @@
 #[macro_use]
 extern crate elapsed_time;
 
+use std::env;
 use eframe::{egui, epi};
 use text_editor::text_editor::TextEditor;
 use crate::egui::Rounding;
@@ -50,8 +51,15 @@ struct MyApp {
 }
 impl MyApp {
     fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+        let args: Vec<_> = env::args().collect();
+        if args.len() < 2 {
+            println!("Please provide file to open as 1st program argument");
+        } else {
+            println!("Opening {}", args[1].as_str());
+        }
+
         Self {
-            text_editor: TextEditor::new(creation_context),
+            text_editor: TextEditor::new(creation_context, args[1].as_str()),
         }
     }
 }

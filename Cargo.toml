@@ -12,7 +12,7 @@ bytecount = "0.6.2"
 elapsed-time = "0.1"
 
 
-[patch.crates-io]
-ab_glyph = { git = "https://github.com/nmeylan/ab-glyph"}
-glyph_brush_layout = { path = "/home/nmeylan/dev/perso/glyph-brush/layout" }
-glow_glyph = { git = "https://github.com/nmeylan/glow_glyph.git" }
+#[patch.crates-io]
+#ab_glyph = { git = "https://github.com/nmeylan/ab-glyph"}
+##glyph_brush_layout = { path = "/home/nmeylan/dev/perso/glyph-brush/layout" }
+#glow_glyph = { git = "https://github.com/nmeylan/glow_glyph.git" }
