@@ -5,3 +5,5 @@
 extern crate elapsed_time;
 
 pub mod text_editor;
+mod history;
+mod selection;

@@ -5,7 +5,6 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::format;
 use std::default::Default;
-use std::detect::__is_feature_detected::sha;
 use std::fs;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -22,95 +21,42 @@ use eframe::egui::{*};
 use eframe::epaint::{*};
 use eframe::{egui, epi, epaint, emath};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
-use crate::text_editor::SingleAction::NewLine;
+use crate::history::{AddCharAction, BulkAction, HasUnsavedState, RemoveCharAction, SingleAction, State, UnsavedState};
+use crate::selection::Selection;
 
 pub struct TextEditor {
-    lines: Vec<String>,
+    pub(crate) lines: Vec<String>,
     glyph_brush_text_editor: Arc<Mutex<GlyphBrush>>,
     glyph_brush_line_number: Arc<Mutex<GlyphBrush>>,
-    scroll_offset: Pos<f32>,
-    lines_count: usize,
-    char_width: f32,
-    line_height: f32,
-    scale: f32,
-    gutter_width: f32,
-    has_pressed_arrow_key: bool,
-    text_editor_viewport: Rect,
+    pub(crate) scroll_offset: Pos<f32>,
+    pub(crate) lines_count: usize,
+    pub(crate) char_width: f32,
+    pub(crate) line_height: f32,
+    pub(crate) scale: f32,
+    pub(crate) gutter_width: f32,
+    pub(crate) has_pressed_arrow_key: bool,
+    pub(crate) text_editor_viewport: Rect,
     // Cursor
-    cursor_index: Pos<usize>,
-    cursor_pos: Pos<f32>,
+    pub cursor_index: Pos<usize>,
+    pub cursor_pos: Pos<f32>,
     // Selection
-    start_dragged_index: Option<Pos<usize>>,
-    stop_dragged_index: Option<Pos<usize>>,
-    selection_start_index: Option<Pos<usize>>,
-    selection_end_index: Option<Pos<usize>>,
-    highlighted_word: Option<String>,
-    word_occurrences: RefCell<Vec<(Pos<usize>, Pos<usize>)>>,
+    pub(crate) start_dragged_index: Option<Pos<usize>>,
+    pub(crate) stop_dragged_index: Option<Pos<usize>>,
+    pub(crate) selection_start_index: Option<Pos<usize>>,
+    pub(crate) selection_end_index: Option<Pos<usize>>,
+    pub(crate) highlighted_word: Option<String>,
+    pub(crate) word_occurrences: RefCell<Vec<(Pos<usize>, Pos<usize>)>>,
     // matching open-close characters
     opening_char: RefCell<Option<char>>,
     closing_char: RefCell<Option<char>>,
     opening_char_index: RefCell<Option<Pos<usize>>>,
     closing_char_index: RefCell<Option<Pos<usize>>>,
-    unsaved_stated: Option<UnsavedState>,
+    pub unsaved_stated: Option<UnsavedState>,
     history: Vec<State>,
     history_index: usize,
     latest_change_time: f32,
 }
 
-#[derive(Clone, Debug)]
-enum SingleAction {
-    AddChar(AddCharAction),
-    RemoveChar(RemoveCharAction),
-    RemoveLine(usize),
-    NewLine(Pos<usize>),
-}
-
-#[derive(Clone, Debug)]
-enum BulkAction {
-    AddText(TextAction),
-    RemoveText(TextAction),
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct TextAction {
-    start_index: usize,
-    end_index: usize,
-    lines: Vec<String>,
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct AddCharAction {
-    start_pos: Pos<usize>,
-    char: String,
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct RemoveCharAction {
-    start_pos: Pos<usize>,
-    char: char,
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct DefaultAction {
-    start_pos: Pos<usize>,
-    line: String,
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct UnsavedState {
-    last_activity_at: f64,
-    cursor_index: Pos<usize>,
-    cursor_pos: Pos<f32>,
-    actions: Vec<SingleAction>,
-}
-
-#[derive(Clone, Debug)]
-pub struct State {
-    created_at: f64,
-    cursor_index: Pos<usize>,
-    cursor_pos: Pos<f32>,
-    bulk_action: BulkAction,
-}
 
 #[derive(Default, Debug, Clone)]
 pub struct Pos<T> {
@@ -675,7 +621,7 @@ impl TextEditor {
         }
     }
 
-    fn feed_history(&mut self, ui: &Ui) {
+    pub fn feed_history(&mut self, ui: &Ui) {
         let maybe_state = self.flush_unsaved_state(ui.input().time);
         if maybe_state.is_some() {
             self.history.push(maybe_state.unwrap());
@@ -725,7 +671,7 @@ impl TextEditor {
     }
 
     #[inline]
-    fn sanitize_cursor_position(&mut self) {
+    pub(crate) fn sanitize_cursor_position(&mut self) {
         if self.cursor_index.y >= self.lines_count {
             self.set_cursor_y(self.lines_count - 1);
         }
@@ -737,13 +683,13 @@ impl TextEditor {
     }
 
     #[inline]
-    fn line_index_from_line_y(&self, line_y: f32) -> usize {
+    pub(crate) fn line_index_from_line_y(&self, line_y: f32) -> usize {
         // line_y is from the virtual scroll rect, need to add the scroll offset y to get the actual position.
         ((line_y + self.scroll_offset.y) / self.line_height) as usize
     }
 
     #[inline]
-    fn y_to_index(&self, y: f32) -> usize {
+    pub(crate) fn y_to_index(&self, y: f32) -> usize {
         // convert y to line_number
         // e.g: line_height = 10; (thus: line min.y = 10, line max.y = 20)
         // if y = 15 then line_number = 1 + 1
@@ -752,17 +698,17 @@ impl TextEditor {
     }
 
     #[inline]
-    fn x_to_index(&self, x: f32) -> usize {
+    pub(crate) fn x_to_index(&self, x: f32) -> usize {
         ((x) / (self.char_width / 2.0)) as usize
     }
 
     #[inline]
-    fn line_at(&self, y: f32) -> &str {
+    pub(crate) fn line_at(&self, y: f32) -> &str {
         self.lines[self.y_to_index(y)].as_str()
     }
 
     #[inline]
-    fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
+    pub(crate) fn index_to_pos(&self, index: Pos<usize>) -> Pos<f32> {
         Pos::<f32> {
             x: self.index_to_x(index.x),
             y: self.index_to_y(index.y),
@@ -770,23 +716,23 @@ impl TextEditor {
     }
 
     #[inline]
-    fn index_to_y(&self, index: usize) -> f32 {
+    pub(crate) fn index_to_y(&self, index: usize) -> f32 {
         index as f32 * self.line_height
     }
 
     #[inline]
-    fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
+    pub(crate) fn index_to_y_in_virtual_scroll(&self, index: usize, first_visible_index: usize) -> f32 {
         // caller need to ensure that index is greater than first_visible_index
         (index - first_visible_index) as f32 * self.line_height
     }
 
     #[inline]
-    fn index_to_x(&self, index: usize) -> f32 {
+    pub(crate) fn index_to_x(&self, index: usize) -> f32 {
         index as f32 * (self.char_width / 2.0) + (self.line_x_offset())
     }
 
     #[inline]
-    fn set_cursor_y(&mut self, new_value: usize) {
+    pub(crate) fn set_cursor_y(&mut self, new_value: usize) {
         if self.cursor_index.y == new_value {
             return;
         }
@@ -797,7 +743,7 @@ impl TextEditor {
     }
 
     #[inline]
-    fn set_cursor_x(&mut self, new_value: usize) {
+    pub(crate) fn set_cursor_x(&mut self, new_value: usize) {
         if self.cursor_index.x == new_value {
             return;
         }
@@ -808,7 +754,7 @@ impl TextEditor {
     }
 
     #[inline]
-    fn line_x_offset(&self) -> f32 {
+    pub(crate) fn line_x_offset(&self) -> f32 {
         self.text_editor_viewport.min.x - self.scroll_offset.x / 2.0
     }
 
@@ -1008,307 +954,3 @@ impl TextEditor {
     }
 }
 
-trait Selection {
-    fn reset_selection(&mut self);
-    fn set_selection(&mut self);
-    fn has_selection(&self) -> bool;
-    fn is_single_line_selection(&self) -> bool;
-    fn is_two_lines_selection(&self) -> bool;
-    fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape>;
-    fn key_press_on_selection(&mut self, text_to_insert: Option<&str>);
-}
-
-impl Selection for TextEditor {
-    fn reset_selection(&mut self) {
-        self.selection_start_index = None;
-        self.selection_end_index = None;
-        self.start_dragged_index = None;
-        self.stop_dragged_index = None;
-        self.highlighted_word = None;
-    }
-    fn set_selection(&mut self) {
-        if !self.start_dragged_index.is_some() || !self.stop_dragged_index.is_some() {
-            return;
-        }
-        let mut start_index = self.start_dragged_index.clone().unwrap();
-        let mut end_index = self.stop_dragged_index.clone().unwrap();
-        if self.start_dragged_index.as_ref().unwrap().y > self.stop_dragged_index.as_ref().unwrap().y { // user can drag selection from bottom to top
-            start_index = self.stop_dragged_index.clone().unwrap();
-            end_index = self.start_dragged_index.clone().unwrap();
-        }
-        if start_index.y == end_index.y && start_index.x > end_index.x { // user can drag selection from right to left
-            let x = start_index.x;
-            start_index.x = end_index.x;
-            end_index.x = x;
-        }
-        if start_index.y >= self.lines_count {
-            start_index.y = self.lines_count - 1;
-        }
-        if end_index.y >= self.lines_count {
-            end_index.y = self.lines_count - 1;
-        }
-        let line_len = self.lines[start_index.y].len();
-        if start_index.x > line_len {
-            start_index.x = line_len;
-        }
-        let line_len = self.lines[end_index.y].len();
-        if end_index.x > line_len {
-            end_index.x = line_len;
-        }
-        self.selection_start_index = Some(start_index);
-        self.selection_end_index = Some(end_index);
-    }
-
-    fn has_selection(&self) -> bool {
-        return self.selection_start_index.is_some() && self.selection_end_index.is_some();
-    }
-
-    fn is_single_line_selection(&self) -> bool {
-        if !self.has_selection() {
-            return false;
-        }
-        self.selection_start_index.as_ref().unwrap().y == self.selection_end_index.as_ref().unwrap().y
-    }
-
-    fn is_two_lines_selection(&self) -> bool {
-        if !self.has_selection() {
-            return false;
-        }
-        self.selection_start_index.as_ref().unwrap().y + 1 == self.selection_end_index.as_ref().unwrap().y
-    }
-
-    fn selection_shapes(&self, first_line_index: usize) -> Vec<Shape> {
-        if !self.has_selection() {
-            return vec![];
-        }
-        if self.is_single_line_selection() { // single line selection
-            if self.selection_start_index.as_ref().unwrap().y < first_line_index { // if selection is not visible
-                return vec![];
-            }
-            vec![
-                Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
-                    },
-                    fill: Color32::LIGHT_BLUE,
-                    rounding: Rounding::none(),
-                    stroke: Default::default(),
-                })
-            ]
-        } else if self.is_two_lines_selection() { // two lines selection
-            let mut shapes = vec![];
-            if self.selection_start_index.as_ref().unwrap().y >= first_line_index {
-                shapes.push(epaint::Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
-                    },
-                    fill: Color32::LIGHT_BLUE,
-                    rounding: Rounding::none(),
-                    stroke: Default::default(),
-                }))
-            }
-            if self.selection_end_index.as_ref().unwrap().y >= first_line_index {
-                shapes.push(epaint::Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
-                    },
-                    rounding: Rounding::none(),
-                    fill: Color32::LIGHT_BLUE,
-                    stroke: Default::default(),
-                }))
-            }
-            return shapes;
-        } else {
-            let mut shapes = vec![];
-            if self.selection_start_index.as_ref().unwrap().y >= first_line_index {
-                shapes.push(epaint::Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
-                    },
-                    rounding: Rounding::none(),
-                    fill: Color32::LIGHT_BLUE,
-                    stroke: Default::default(),
-                }))
-            }
-
-            if self.selection_end_index.as_ref().unwrap().y >= first_line_index {
-                shapes.push(epaint::Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_start_index.as_ref().unwrap().y + 1).max(first_line_index), first_line_index) },
-                        max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_end_index.as_ref().unwrap().y - 1).max(first_line_index), first_line_index) + self.line_height },
-                    },
-                    rounding: Rounding::none(),
-                    fill: Color32::LIGHT_BLUE,
-                    stroke: Default::default(),
-                }));
-                shapes.push(epaint::Shape::Rect(RectShape {
-                    rect: Rect {
-                        min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
-                        max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
-                    },
-                    rounding: Rounding::none(),
-                    fill: Color32::LIGHT_BLUE,
-                    stroke: Default::default(),
-                }))
-            }
-            return shapes;
-        }
-    }
-
-    fn key_press_on_selection(&mut self, text_to_insert: Option<&str>) {
-        let selection_start_index = self.selection_start_index.as_ref().unwrap().clone();
-        let selection_end_index = self.selection_end_index.as_ref().unwrap().clone();
-        if self.is_single_line_selection() {
-            let line = &self.lines[selection_start_index.y];
-            let line_len = line.len();
-            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
-            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
-            self.lines[selection_start_index.y] = format!("{}{}{}", &line[0..start_x_index],
-                                                          text_to_insert.unwrap_or(""),
-                                                          &line[end_x_index..line_len]);
-        } else if self.is_two_lines_selection() {
-            let line = &self.lines[selection_start_index.y];
-            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
-            let new_line_start = String::from(&line[0..start_x_index]);
-            self.lines.remove(selection_start_index.y);
-
-            let line = &self.lines[selection_start_index.y];
-            let line_len = line.len();
-            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
-            let new_line_end = String::from(&line[end_x_index..line_len]);
-            self.lines[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
-        } else {
-            let line = &self.lines[selection_start_index.y];
-            let start_x_index = line.byte_index_from_char_index(selection_start_index.x);
-            let new_line_start = String::from(&line[0..start_x_index]);
-
-            let line = &self.lines[selection_end_index.y];
-            let line_len = line.len();
-            let end_x_index = line.byte_index_from_char_index(selection_end_index.x);
-            let new_line_end = String::from(&line[end_x_index..line_len]);
-
-            let text_start = &self.lines[0..selection_start_index.y];
-            let text_end = &self.lines[selection_end_index.y..self.lines.len()];
-            self.lines = [text_start, text_end].concat();
-            self.lines[selection_start_index.y] = format!("{}{}{}", new_line_start, text_to_insert.unwrap_or(""), new_line_end);
-        }
-        self.set_cursor_y(selection_start_index.y);
-        self.set_cursor_x(selection_start_index.x);
-        self.reset_selection();
-    }
-}
-
-trait HasUnsavedState {
-    fn init_unsaved_state(&mut self, time: f64);
-    fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction);
-    fn flush_unsaved_state(&mut self, time: f64) -> Option<State>;
-}
-
-const InactivityPeriod: f64 = 2.0;
-
-impl HasUnsavedState for TextEditor {
-    fn init_unsaved_state(&mut self, time: f64) {
-        self.unsaved_stated = Some(UnsavedState {
-            last_activity_at: time,
-            cursor_index: self.cursor_index.clone(),
-            cursor_pos: self.cursor_pos.clone(),
-            actions: vec![],
-        })
-    }
-
-    fn push_action_to_unsaved_state(&mut self, ui: &Ui, action: SingleAction) {
-        if self.unsaved_stated.is_none() {
-            self.init_unsaved_state(ui.input().time);
-        }
-        let unsaved_state = self.unsaved_stated.as_mut().unwrap();
-        unsaved_state.actions.push(action);
-        if ui.input().time - unsaved_state.last_activity_at >= InactivityPeriod {
-            self.feed_history(ui);
-        } else {
-            unsaved_state.last_activity_at = ui.input().time;
-        }
-    }
-
-    fn flush_unsaved_state(&mut self, time: f64) -> Option<State> {
-        if self.unsaved_stated.is_none() {
-            return None;
-        }
-        let mut unsaved_state = self.unsaved_stated.as_ref().unwrap().clone();
-        if time - unsaved_state.last_activity_at < InactivityPeriod {
-            return None;
-        }
-        println!("Saving state");
-        self.unsaved_stated = None;
-        let mut min_index = self.lines.len();
-        let mut max_index = 0;
-        let mut y = 0;
-        let mut added_lines = 0;
-        for action in unsaved_state.actions.iter() {
-            match action {
-                SingleAction::AddChar(action) => y = action.start_pos.y,
-                SingleAction::RemoveChar(action) => y = action.start_pos.y,
-                SingleAction::RemoveLine(line_index) => y = line_index.clone(),
-                SingleAction::NewLine(position) => {
-                    y = position.y;
-                    added_lines += 1;
-                }
-            }
-            if min_index > y {
-                min_index = y;
-            }
-            if max_index < y {
-                max_index = y;
-            }
-        }
-        max_index += added_lines;
-
-        let mut lines = vec![String::default(); max_index - min_index + 1];
-        lines.splice(0..lines.len(), self.lines[min_index..=(self.lines.len() - 1).min(max_index)].to_vec()).collect::<Vec<String>>();
-        let before_lines_count = lines.len();
-        loop {
-            if unsaved_state.actions.is_empty() {
-                break;
-            }
-            let action = unsaved_state.actions.pop().unwrap();
-            match action {
-                SingleAction::AddChar(action) => {
-                    lines[action.start_pos.y - min_index].delete_char_range(action.start_pos.x..action.start_pos.x + 1);
-                }
-                SingleAction::RemoveChar(action) => {
-                    lines[action.start_pos.y - min_index].insert((action.start_pos.x.max(1)) - 1, action.char);
-                }
-                SingleAction::RemoveLine(line_index) => {
-                    lines.insert(line_index - min_index, String::default());
-                }
-                SingleAction::NewLine(position) => {
-                    let y = position.y - min_index;
-                    let start_line = lines[y].clone();
-                    let end_line = lines[y + 1].clone();
-                    lines[y] = format!("{}{}", start_line, end_line);
-                    lines.remove(y + 1);
-                }
-            }
-        }
-        let after_lines_count = lines.len();
-        let text_action = TextAction {
-            start_index: min_index,
-            end_index: max_index,
-            lines,
-        };
-
-        Some(State {
-            created_at: unsaved_state.last_activity_at,
-            cursor_index: unsaved_state.cursor_index,
-            cursor_pos: unsaved_state.cursor_pos,
-            bulk_action: if before_lines_count <= after_lines_count {
-                BulkAction::AddText(text_action)
-            } else {
-                BulkAction::RemoveText(text_action)
-            },
-        })
-    }
-}
