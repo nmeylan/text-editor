@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = "0.22"
-egui_glow = "0.22"
+eframe = "0.27.2"
+egui_glow = "0.27.2"
 glutin = "0.30"
-glow_glyph = {git = "https://github.com/hecrj/glow_glyph", rev = "22740d0f6ce60ea60d4d877661a5971d224cde77"}
-glow = "0.12"
+glow_glyph = {git = "https://github.com/nmeylan/glow_glyph", rev = "8ef9138"}
+glow = "0.13.1"
 bytecount = "0.6.2"
 elapsed-time = "0.1"

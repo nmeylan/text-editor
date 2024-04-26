@@ -6,7 +6,8 @@
 extern crate elapsed_time;
 
 use std::env;
-use eframe::{egui};
+use eframe::{egui, Theme};
+use eframe::egui::Key::S;
 use text_editor::text_editor::TextEditor;
 use crate::egui::Rounding;
 
@@ -17,7 +18,7 @@ struct Pos<T> {
 }
 
 fn main() {
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {default_theme: Theme::Light, ..eframe::NativeOptions::default() };
     eframe::run_native("Text editor", options, Box::new(|cc| {
         Box::new(MyApp::new(cc))
     }));
@@ -33,7 +34,7 @@ impl eframe::App for MyApp {
         });
         let mut panel = egui::CentralPanel::default();
         let mut panel_frame = egui::containers::Frame {
-            rounding: Rounding::none(),
+            rounding: Rounding::ZERO,
             fill: ctx.style().visuals.window_fill(),
             stroke: Default::default(),
             ..Default::default()

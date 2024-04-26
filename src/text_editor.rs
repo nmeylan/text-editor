@@ -1,26 +1,15 @@
-use std::any::Any;
 use std::borrow::Borrow;
-use std::cell::{RefCell, RefMut};
-use std::cmp::{max, min};
-use std::collections::HashMap;
-use std::fmt::format;
+use std::cell::{RefCell};
 use std::default::Default;
 use std::fs;
-use std::ops::ControlFlow;
 use std::path::Path;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use glow_glyph::{ab_glyph, GlyphBrush, GlyphBrushBuilder, GlyphCruncher, Section, Text};
-use eframe::emath::Vec2;
-use eframe::egui::epaint::TextShape;
-use eframe::egui::{Color32, Context, FontId, Galley, Pos2, Sense, TextFormat};
-use eframe::egui::text::LayoutJob;
+use glow_glyph::{ab_glyph, GlyphBrush, GlyphBrushBuilder, Section, Text};
+use eframe::egui::{Color32, Pos2, Sense};
 use eframe::egui::{*};
 use eframe::epaint::{*};
-use eframe::{egui, epaint, emath, CreationContext};
+use eframe::{egui, epaint, emath};
 use glow_glyph::ab_glyph::{PxScale, Font, ScaleFont};
-use crate::text_editor::SingleAction::NewLine;
 
 pub struct TextEditor {
     lines: Vec<String>,
@@ -125,11 +114,11 @@ impl TextEditor {
         let glyph_brush = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
             .initial_cache_size((2048 * 2, 2048 * 2))
             .draw_cache_position_tolerance(1.0)
-            .build(creation_context.gl.as_ref().unwrap())));
+            .build(creation_context.gl.as_ref().unwrap().as_ref())));
         let glyph_brush_line_number = Arc::new(Mutex::new(GlyphBrushBuilder::using_font(font.clone())
             .initial_cache_size((120, 120))
             .draw_cache_position_tolerance(1.0)
-            .build(creation_context.gl.as_ref().unwrap())));
+            .build(creation_context.gl.as_ref().unwrap().as_ref())));
 
         // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
         let content = fs::read_to_string(Path::new(file_path)).unwrap();
@@ -137,7 +126,7 @@ impl TextEditor {
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
         let font_size = 12.0;
-        let scale_factor = creation_context.integration_info.native_pixels_per_point.unwrap();
+        let scale_factor = creation_context.egui_ctx.pixels_per_point();
         let scale = font_size * scale_factor;
 
         let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
@@ -263,7 +252,7 @@ impl TextEditor {
                     let section = glow_glyph::Section {
                         screen_position: (0.0 - self.scroll_offset.x, 0.0),
                         text: text_line.iter().map(|line| {
-                            Text::default().with_text(&line).with_color([0.0, 0.0, 0.0, 1.0]).with_scale(self.scale)
+                            Text::default().with_text(&line).with_color([0.0, 0.0, 0.0, 1.0]).with_scale(self.scale * 2.0)
                         }).collect::<Vec<Text>>(),
                         layout: glow_glyph::Layout::default_wrap(),
                         ..Section::default()
@@ -290,7 +279,7 @@ impl TextEditor {
                         rect: self.text_editor_viewport,
                         callback:  std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
                             let mut brush_mut = glyph_brush.lock().unwrap();
-                            brush_mut.draw_queued(&painter.gl(),
+                            brush_mut.draw_queued(painter.gl().as_ref(),
                                                   (text_editor_viewport_width) as u32, (text_editor_viewport_height) as u32)
                                 .expect("Draw queued");
                         })),
@@ -856,9 +845,11 @@ impl TextEditor {
                     min: Pos2 { x: self.index_to_x(start_pos.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(start_pos.y, first_line_index) },
                     max: Pos2 { x: self.index_to_x(end_pos.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(start_pos.y, first_line_index) + self.line_height },
                 },
-                rounding: Rounding::none(),
+                rounding: Rounding::ZERO,
                 fill: Color32::YELLOW,
                 stroke: Default::default(),
+                fill_texture_id: Default::default(),
+                uv: Rect::ZERO,
             }));
         }
     }
@@ -873,9 +864,11 @@ impl TextEditor {
                         min: Pos2 { x: self.index_to_x(opening_char_index.x) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) },
                         max: Pos2 { x: self.index_to_x(opening_char_index.x) as f32 + self.char_width, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(opening_char_index.y, first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::GREEN,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }));
             }
         }
@@ -888,9 +881,11 @@ impl TextEditor {
                         min: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) },
                         max: Pos2 { x: self.index_to_x(closing_char_index.x - 1) as f32 + self.char_width, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(closing_char_index.y, first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::GREEN,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }));
             }
         }
@@ -907,7 +902,7 @@ impl TextEditor {
             text: vec![Text::default()
                 .with_text(line_number.to_string().as_str())
                 .with_color(color)
-                .with_scale(self.scale)],
+                .with_scale(self.scale * 2.0)],
             ..Section::default()
         });
     }
@@ -926,8 +921,10 @@ impl TextEditor {
                     } else {
                         Color32::from_rgba_premultiplied(160, 160, 160, 128)
                     },
-                    stroke: Stroke::none(),
+                    stroke: Stroke::NONE,
                     rounding: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }));
             }
         }
@@ -947,8 +944,10 @@ impl TextEditor {
             } else {
                 Color32::from_rgba_premultiplied(160, 160, 160, 128)
             },
-            stroke: Stroke::none(),
+            stroke: Stroke::NONE,
             rounding: Default::default(),
+            fill_texture_id: Default::default(),
+            uv: Rect::ZERO,
         }));
     }
 
@@ -958,9 +957,11 @@ impl TextEditor {
                 min: Pos2 { x: self.cursor_pos.x as f32, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.cursor_index.y, first_line_index) },
                 max: Pos2 { x: self.cursor_pos.x + 2.0, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.cursor_index.y, first_line_index) + self.line_height },
             },
-            rounding: Rounding::none(),
+            rounding: Rounding::ZERO,
             fill: Color32::RED,
             stroke: Default::default(),
+            fill_texture_id: Default::default(),
+            uv: Rect::ZERO,
         })
     }
 
@@ -975,7 +976,7 @@ impl TextEditor {
                     color = [1.0, 0.0, 0.0, 1.0];
                 }
                 Text::default().with_text(text.as_str()).with_color(color)
-                    .with_scale(self.scale)
+                    .with_scale(self.scale * 2.0)
             }).collect::<Vec<Text>>(),
             ..Section::default()
         });
@@ -983,9 +984,11 @@ impl TextEditor {
         ui.allocate_ui_at_rect(gutter_rect, |ui| {
             ui.painter().add(epaint::Shape::Rect(RectShape {
                 rect: gutter_rect,
-                rounding: Rounding::none(),
+                rounding: Rounding::ZERO,
                 fill: Color32::LIGHT_GRAY,
                 stroke: Default::default(),
+                fill_texture_id: Default::default(),
+                uv: Rect::ZERO,
             }));
             let glyph_brush = self.glyph_brush_line_number.clone();
             ui.painter().add(egui::epaint::PaintCallback {
@@ -1085,8 +1088,10 @@ impl Selection for TextEditor {
                         max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     fill: Color32::LIGHT_BLUE,
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 })
             ]
         } else if self.is_two_lines_selection() { // two lines selection
@@ -1098,8 +1103,10 @@ impl Selection for TextEditor {
                         max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
                     fill: Color32::LIGHT_BLUE,
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }))
             }
             if self.selection_end_index.as_ref().unwrap().y >= first_line_index {
@@ -1108,9 +1115,11 @@ impl Selection for TextEditor {
                         min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
                         max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::LIGHT_BLUE,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }))
             }
             return shapes;
@@ -1122,9 +1131,11 @@ impl Selection for TextEditor {
                         min: Pos2 { x: self.index_to_x(self.selection_start_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) },
                         max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_start_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::LIGHT_BLUE,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }))
             }
 
@@ -1134,18 +1145,22 @@ impl Selection for TextEditor {
                         min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_start_index.as_ref().unwrap().y + 1).max(first_line_index), first_line_index) },
                         max: Pos2 { x: self.text_editor_viewport.max.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll((self.selection_end_index.as_ref().unwrap().y - 1).max(first_line_index), first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::LIGHT_BLUE,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }));
                 shapes.push(epaint::Shape::Rect(RectShape {
                     rect: Rect {
                         min: Pos2 { x: self.text_editor_viewport.min.x, y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) },
                         max: Pos2 { x: self.index_to_x(self.selection_end_index.as_ref().unwrap().x), y: self.text_editor_viewport.min.y + self.index_to_y_in_virtual_scroll(self.selection_end_index.as_ref().unwrap().y, first_line_index) + self.line_height },
                     },
-                    rounding: Rounding::none(),
+                    rounding: Rounding::ZERO,
                     fill: Color32::LIGHT_BLUE,
                     stroke: Default::default(),
+                    fill_texture_id: Default::default(),
+                    uv: Rect::ZERO,
                 }))
             }
             return shapes;
