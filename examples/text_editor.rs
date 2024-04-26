@@ -8,7 +8,7 @@ extern crate elapsed_time;
 use std::env;
 use eframe::{egui, Theme};
 use eframe::egui::Key::S;
-use text_editor::text_editor::TextEditor;
+use text_editor::text_editor::{TextEditor, TextEditorOptions};
 use crate::egui::Rounding;
 
 #[derive(Default, Debug, Clone)]
@@ -59,7 +59,7 @@ impl MyApp {
         }
 
         Self {
-            text_editor: TextEditor::new(creation_context, args[1].as_str()),
+            text_editor: TextEditor::new(creation_context, args[1].as_str(), TextEditorOptions::default()),
         }
     }
 }

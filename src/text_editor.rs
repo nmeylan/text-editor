@@ -104,9 +104,24 @@ pub struct Pos<T> {
     pub x: T,
     pub y: T,
 }
+
+#[derive(Debug, Clone)]
+pub struct TextEditorOptions {
+    pub scale_factor: f32,
+    pub font_size: f32,
+}
+
+impl Default for TextEditorOptions {
+    fn default() -> Self {
+        Self {
+            scale_factor: 1.0,
+            font_size: 12.0,
+        }
+    }
+}
 // const scale_factor: f32 = 1.5;
 impl TextEditor {
-    pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str, options: TextEditorOptions) -> Self {
         let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
             "Inconsolata-Regular.ttf"
         )).unwrap();
@@ -125,8 +140,8 @@ impl TextEditor {
         // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
         let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
-        let font_size = 12.0;
-        let scale_factor = creation_context.egui_ctx.pixels_per_point();
+        let font_size = options.font_size;
+        let scale_factor = options.scale_factor;
         let scale = font_size * scale_factor;
 
         let scale_font = font.as_scaled(PxScale { x: scale, y: scale }); // y scale has not impact
