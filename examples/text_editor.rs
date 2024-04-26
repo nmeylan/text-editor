@@ -5,7 +5,8 @@
 #[macro_use]
 extern crate elapsed_time;
 
-use std::env;
+use std::{env, fs};
+use std::path::Path;
 use eframe::{egui, Theme};
 use eframe::egui::Key::S;
 use text_editor::text_editor::{TextEditor, TextEditorOptions};
@@ -57,9 +58,9 @@ impl MyApp {
         } else {
             println!("Opening {}", args[1].as_str());
         }
-
+        let content = fs::read_to_string(Path::new(args[1].as_str())).unwrap();
         Self {
-            text_editor: TextEditor::new(creation_context, args[1].as_str(), TextEditorOptions::default()),
+            text_editor: TextEditor::new(creation_context, content, TextEditorOptions::default()),
         }
     }
 }

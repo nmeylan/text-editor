@@ -121,7 +121,7 @@ impl Default for TextEditorOptions {
 }
 // const scale_factor: f32 = 1.5;
 impl TextEditor {
-    pub fn new(creation_context: &eframe::CreationContext<'_>, file_path: &str, options: TextEditorOptions) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>, text: String, options: TextEditorOptions) -> Self {
         let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
             "Inconsolata-Regular.ttf"
         )).unwrap();
@@ -135,10 +135,7 @@ impl TextEditor {
             .draw_cache_position_tolerance(1.0)
             .build(creation_context.gl.as_ref().unwrap().as_ref())));
 
-        // let content = fs::read_to_string(Path::new("/Users/nmeylan/dev/perso/meta-editor/nmeylan/src/text")).unwrap();
-        let content = fs::read_to_string(Path::new(file_path)).unwrap();
-        // let content = fs::read_to_string(Path::new("/home/nmeylan/dev/perso/rust-ragnarok-server/lib/packets/src/packets_impl.rs")).unwrap();
-        let split = content.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
+        let split = text.split("\n").map(|s| s.to_string()).collect::<Vec<String>>();
         let lines_count = split.len();
         let font_size = options.font_size;
         let scale_factor = options.scale_factor;
